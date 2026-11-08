@@ -33,7 +33,7 @@ def _point_in_poly(x: float, y: float, points: list[list[float]]) -> bool:
     return inside
 
 
-def _room_for(scene: dict[str, Any], x: float, y: float, level: str, threshold: float = 40000.0) -> str | None:
+def _room_for(scene: dict[str, Any], x: float, y: float, level: str, threshold: float = 1e12) -> str | None:
     for room in scene.get("rooms", []):
         if room.get("level") == level and _point_in_poly(x, y, room.get("points", [])):
             return room["id"]
