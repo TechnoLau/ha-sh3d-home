@@ -237,7 +237,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.4.9"),
+        "version": os.environ.get("SH3D_VERSION", "0.5.0"),
     })
 
 
@@ -468,6 +468,67 @@ async def api_import_obj(request: web.Request) -> web.Response:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+
+async def api_save_rooms(request: web.Request) -> web.Response:
+    model_id = validate_model_id(request.match_info["model_id"])
+    if model_id not in STORE.models:
+        raise web.HTTPNotFound(text="Modell nicht gefunden")
+    data = await read_json(request)
+    folder = MODELS_DIR / model_id
+    scene_file = folder / "scene.json"
+    scene = json.loads(scene_file.read_text())
+    obj = scene.get("obj")
+    if not obj:
+        raise web.HTTPBadRequest(text="Kein OBJ-Modell")
+    groups = {g["name"]: g for g in obj.get("groups", [])}
+    desired = data.get("rooms") or []
+    rooms = []
+    for index, item in enumerate(desired):
+        if not isinstance(item, dict):
+            continue
+        selected = [str(n) for n in (item.get("groups") or []) if str(n) in groups]
+        floors = [groups[n] for n in selected if groups[n].get("kind") == "floor"]
+        if not floors:
+            continue
+        level = item.get("level") or floors[0].get("level")
+        xs = [g["bbox"]["minX"] for g in floors] + [g["bbox"]["maxX"] for g in floors]
+        zs = [g["bbox"]["minZ"] for g in floors] + [g["bbox"]["maxZ"] for g in floors]
+        minx, maxx, minz, maxz = min(xs), max(xs), min(zs), max(zs)
+        room_id = "room-obj-" + str(index + 1)
+        points = [[round(minx, 2), round(minz, 2)], [round(maxx, 2), round(minz, 2)], [round(maxx, 2), round(maxz, 2)], [round(minx, 2), round(maxz, 2)]]
+        room = {
+            "id": room_id, "name": str(item.get("name") or f"Zimmer {index + 1}"),
+            "level": level, "points": points,
+            "center": [round((minx + maxx) / 2, 2), round((minz + maxz) / 2, 2)],
+            "area": round((maxx - minx) * (maxz - minz) / 10000, 2),
+        }
+        rooms.append(room)
+        for name in selected:
+            groups[name]["room"] = room_id
+            groups[name]["level"] = level
+        # Furniture and devices are auto-assigned by their centre.
+        for g in groups.values():
+            if g.get("kind") in ("wall", "floor", "ceiling", "ground"):
+                continue
+            if g.get("level") != level:
+                continue
+            cx, cz = g["center"][0], g["center"][2]
+            if minx - 20 <= cx <= maxx + 20 and minz - 20 <= cz <= maxz + 20:
+                g["room"] = room_id
+        for o in obj.get("objects", []):
+            x, y = o.get("x", 0), o.get("y", 0)
+            if o.get("level") == level and minx - 20 <= x <= maxx + 20 and minz - 20 <= y <= maxz + 20:
+                o["room"] = room_id
+    scene["rooms"] = rooms
+    scene["objects"] = obj.get("objects", [])
+    scene_file.write_text(json.dumps(scene, ensure_ascii=False))
+    STORE.scene_cache[model_id] = scene
+    meta = STORE.models[model_id]
+    meta["stats"] = {**meta.get("stats", {}), "rooms": len(rooms)}
+    STORE.write_meta(model_id, meta)
+    return json_response({"ok": True, "rooms": rooms})
+
+
 async def api_save_floors(request: web.Request) -> web.Response:
     model_id = validate_model_id(request.match_info["model_id"])
     if model_id not in STORE.models:
@@ -655,7 +716,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.9"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.5.0"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -725,7 +786,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.9",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.5.0",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -735,7 +796,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.9"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.5.0"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
@@ -816,6 +877,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/import-package", api_import_package)
     app.router.add_post("/api/import-obj", api_import_obj)
     app.router.add_put("/api/models/{model_id}/floors", api_save_floors)
+    app.router.add_put("/api/models/{model_id}/rooms", api_save_rooms)
     app.router.add_post("/api/models/{model_id}/obj", api_attach_obj)
     app.router.add_post("/api/import/scan", api_scan)
     app.router.add_get("/api/entities", api_entities)

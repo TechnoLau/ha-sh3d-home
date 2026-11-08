@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.9';
+import { Viewer } from './viewer.js?v=0.5.0';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.9';
+} from './rules.js?v=0.5.0';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1424,7 +1424,7 @@ function openSettingsModal() {
       <div class="modal-section"><h3>Modell</h3>
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
         <div class="btn-row" style="margin-top:9px"><button class="btn btn-small" id="setUpload"><svg><use href="#i-upload"/></svg> Neues Modell</button><a class="btn btn-small" href="models/${state.model.id}/source" download><svg><use href="#i-copy"/></svg> .sh3d</a></div>
-        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setFloorsEdit"><svg><use href="#i-layers"/></svg> Etagen einteilen</button><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
+        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setFloorsEdit"><svg><use href="#i-layers"/></svg> Etagen einteilen</button><button class="btn btn-small" id="setRoomsEdit"><svg><use href="#i-plus"/></svg> Zimmer einrichten</button><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
         <p class="hint">Neue Modelle werden über <b>Neu</b> mit OBJ, SH3D, MTL und Texturen importiert.</p>
       </div>
       <div class="modal-section"><h3>Verbindung</h3>
@@ -1479,6 +1479,7 @@ function openSettingsModal() {
   }));
   $('#setUpload').addEventListener('click', () => { closeModal(); openImportWizard(); });
   $('#setFloorsEdit')?.addEventListener('click', () => { closeModal(); openFloorEditor(); });
+  $('#setRoomsEdit')?.addEventListener('click', () => { closeModal(); openRoomConfigurator(); });
   $('#setDelete').addEventListener('click', async () => {
     if (!confirm(`Modell „${state.model.name}“ wirklich löschen?`)) return;
     try { await api(`models/${state.model.id}`, { method: 'DELETE' }); state.models = state.models.filter(m => m.id !== state.model.id); closeModal(); if (state.models.length) await openModel(state.models[0]); else { state.model = null; state.scene = null; setEmpty(true); } toast('Modell gelöscht'); } catch (err) { toast(err.message, true); }
@@ -1655,6 +1656,84 @@ function openImportWizard() {
 }
 
 
+
+function openRoomConfigurator() {
+  if (!state.scene?.obj) { toast('Dieses Modell hat keine OBJ-Geometrie', true); return; }
+  const groups = state.scene.obj.groups || [];
+  const floors = groups.filter(g => g.kind === 'floor');
+  const walls = groups.filter(g => g.kind === 'wall');
+  if (!floors.length) { toast('Keine Bodenflächen im OBJ gefunden', true); return; }
+  const levels = state.scene.levels || [];
+  const levelName = id => levels.find(l => l.id === id)?.name || 'Etage';
+  const near = (wall, floor) => !(
+    wall.bbox.maxX < floor.bbox.minX - 30 || wall.bbox.minX > floor.bbox.maxX + 30 ||
+    wall.bbox.maxZ < floor.bbox.minZ - 30 || wall.bbox.minZ > floor.bbox.maxZ + 30
+  );
+  const rooms = [];
+  const newRoom = () => {
+    const floor = floors[0];
+    const room = { name: `Zimmer ${rooms.length + 1}`, level: floor.level, floor: floor.name, walls: new Set() };
+    for (const w of walls) if (w.level === room.level && near(w, floor)) room.walls.add(w.name);
+    rooms.push(room);
+  };
+  const render = () => {
+    els.modal.innerHTML = `
+      <div class="modal-head"><div><h2>Zimmer einrichten</h2><p>Boden auswählen, Wände markieren – Möbel werden automatisch zugeordnet.</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+      <div class="modal-body">
+        <div class="btn-row" style="margin-bottom:10px"><button class="btn btn-small" id="addRoom"><svg><use href="#i-plus"/></svg> Zimmer hinzufügen</button></div>
+        <div id="roomDrafts">${rooms.map((room, i) => {
+          const rf = floors.filter(f => f.level === room.level);
+          const rw = walls.filter(w => w.level === room.level);
+          return `<div class="room-config" data-room="${i}">
+            <div class="room-config-head"><input class="input" data-name="${i}" value="${escapeHtml(room.name)}"><button class="icon-btn" data-remove-room="${i}"><svg><use href="#i-trash"/></svg></button></div>
+            <div class="field"><label>Etage</label><select class="input" data-level="${i}">${levels.map(l => `<option value="${l.id}" ${l.id === room.level ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}</select></div>
+            <div class="field"><label>Boden</label><select class="input" data-floor="${i}">${rf.map(f => `<option value="${f.name}" ${f.name === room.floor ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select></div>
+            <div class="room-wall-title"><span>Wände</span><button class="chip" data-all-walls="${i}">Alle</button></div>
+            <div class="room-wall-list">${rw.map(w => `<label class="room-wall"><input type="checkbox" data-wall="${i}:${w.name}" ${room.walls.has(w.name) ? 'checked' : ''}> <span>${escapeHtml(w.name)}</span></label>`).join('')}</div>
+          </div>`;
+        }).join('')}</div>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="saveRooms"><svg><use href="#i-check"/></svg> Zimmer speichern</button></div>`;
+    openModal();
+    $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+    $('#addRoom').addEventListener('click', () => { newRoom(); render(); });
+    $$('[data-remove-room]').forEach(b => b.addEventListener('click', () => { rooms.splice(Number(b.dataset.removeRoom), 1); render(); }));
+    $$('[data-name]').forEach(el => el.addEventListener('input', () => { rooms[Number(el.dataset.name)].name = el.value; }));
+    $$('[data-level]').forEach(el => el.addEventListener('change', () => {
+      const room = rooms[Number(el.dataset.level)]; room.level = el.value;
+      const first = floors.find(f => f.level === room.level); room.floor = first?.name || '';
+      room.walls.clear(); if (first) for (const w of walls) if (w.level === room.level && near(w, first)) room.walls.add(w.name);
+      render();
+    }));
+    $$('[data-floor]').forEach(el => el.addEventListener('change', () => {
+      const room = rooms[Number(el.dataset.floor)]; room.floor = el.value;
+      const floor = floors.find(f => f.name === room.floor);
+      room.walls.clear(); if (floor) for (const w of walls) if (w.level === room.level && near(w, floor)) room.walls.add(w.name);
+      render();
+    }));
+    $$('[data-wall]').forEach(el => el.addEventListener('change', () => {
+      const [i, name] = el.dataset.wall.split(':'); const room = rooms[Number(i)];
+      if (el.checked) room.walls.add(name); else room.walls.delete(name);
+    }));
+    $$('[data-all-walls]').forEach(btn => btn.addEventListener('click', () => {
+      const room = rooms[Number(btn.dataset.allWalls)];
+      const rw = walls.filter(w => w.level === room.level);
+      if (room.walls.size === rw.length) room.walls.clear(); else for (const w of rw) room.walls.add(w.name);
+      render();
+    }));
+    $('#saveRooms').addEventListener('click', async () => {
+      const payload = rooms.map(r => ({ name: r.name, level: r.level, groups: [r.floor, ...r.walls] })).filter(r => r.groups[0]);
+      try {
+        await api(`models/${state.model.id}/rooms`, { method: 'PUT', body: { rooms: payload } });
+        closeModal(); const list = await api('models'); state.models = list.models || [];
+        await openModel(state.models.find(m => m.id === state.model.id) || state.model);
+        toast(`${payload.length} Zimmer gespeichert`);
+      } catch (err) { toast('Zimmer speichern fehlgeschlagen: ' + err.message, true); }
+    });
+  };
+  render();
+}
+
 function openFloorEditor() {
   if (!state.scene?.obj) { toast('Dieses Modell hat keine OBJ-Geometrie', true); return; }
   const b = state.scene.obj.bounds;
@@ -1701,7 +1780,7 @@ function openFloorEditor() {
       closeModal();
       const list = await api('models'); state.models = list.models || [];
       await openModel(state.models.find(m => m.id === state.model.id) || state.model);
-      toast(`${data.levels.length} Etagen gespeichert`);
+      toast(`${data.levels.length} Etagen gespeichert`); setTimeout(() => openRoomConfigurator(), 500);
     } catch (err) { toast('Etagen speichern fehlgeschlagen: ' + err.message, true); }
   });
   renderCuts();

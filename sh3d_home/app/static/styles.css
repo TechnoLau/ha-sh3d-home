@@ -573,3 +573,12 @@ body.room-only .overlay .modal { margin: 0 auto; }
 .import-drop { border: 1px dashed rgba(130,112,84,.35); border-radius: 9px; padding: 12px; text-align: center; color: var(--ink-2); font-size: 11px; }
 .import-drop .btn { margin-left: 6px; }
 .import-file { margin-top: 6px; min-height: 14px; font-size: 10px; font-weight: 650; color: var(--accent-deep); word-break: break-all; }
+
+/* room configurator */
+.room-config { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; background: rgba(255,252,246,.55); }
+.room-config-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.room-config-head .input { flex: 1; font-weight: 650; }
+.room-wall-title { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 5px; font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .08em; }
+.room-wall-list { max-height: 180px; overflow: auto; border: 1px solid rgba(130,112,84,.16); border-radius: 8px; padding: 7px 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.room-wall { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--ink-2); white-space: nowrap; overflow: hidden; }
+.room-wall span { overflow: hidden; text-overflow: ellipsis; }
