@@ -511,3 +511,18 @@ body.no-chrome .stage { background: #e7e1d5; }
   .rule-editor { width: 100%; }
   .condition-row { grid-template-columns: 1fr 1fr 24px; }
 }
+
+.walk-pad { position: absolute; z-index: 11; left: 50%; bottom: 78px; transform: translateX(-50%); display: none; grid-template-columns: repeat(3, 42px); grid-template-rows: repeat(2, 42px); gap: 4px; pointer-events: auto; }
+.walk-pad.is-on { display: grid; }
+.walk-pad button { width: 42px; height: 42px; border-radius: 50%; background: rgba(33,31,27,.72); color: #fff8ea; border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(6px); font-size: 13px; }
+.walk-pad button[data-move="f"] { grid-column: 2; grid-row: 1; }
+.walk-pad button[data-move="l"] { grid-column: 1; grid-row: 2; }
+.walk-pad button[data-move="b"] { grid-column: 2; grid-row: 2; }
+.walk-pad button[data-move="r"] { grid-column: 3; grid-row: 2; }
+.walk-pad button:active { background: var(--accent); }
+body.embed .walk-pad { bottom: 72px; }
+
+@media (min-width: 861px) { .sidebar-close { display: none !important; } }
+.filter-row { flex-wrap: wrap; overflow: visible; }
+
+.stage.is-drop::before { content: "SH3D-Datei hier ablegen"; position: absolute; inset: 18px; z-index: 50; border: 2px dashed var(--accent); border-radius: 16px; background: rgba(250,247,240,.85); color: var(--accent-deep); display: grid; place-items: center; font: 600 15px var(--font); pointer-events: none; }

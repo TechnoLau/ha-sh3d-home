@@ -752,6 +752,7 @@ export class Viewer {
     if (!this.floatButtons.size) return;
     const rect = this.canvas.getBoundingClientRect();
     const v = new THREE.Vector3();
+    const items = [];
     for (const [id, btn] of this.floatButtons) {
       const wrapper = this.objectGroups.get(id);
       if (!wrapper || !btn.el.isConnected) continue;
@@ -765,9 +766,19 @@ export class Viewer {
       const visible = !behind && x > -60 && x < rect.width + 60 && y > 10 && y < rect.height + 60 && wrapper.visible && this._isInScope(obj);
       btn.el.classList.toggle('is-hidden', !visible);
       if (visible) {
-        btn.el.style.left = x + 'px';
-        btn.el.style.top = y + 'px';
+        items.push({ btn, x, y, w: 100, h: 34 });
       }
+    }
+    items.sort((a, b) => a.y - b.y);
+    for (let i = 0; i < items.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const a = items[i], b = items[j];
+        if (Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2) {
+          a.y = b.y - b.h - 4;
+        }
+      }
+      items[i].btn.el.style.left = items[i].x + 'px';
+      items[i].btn.el.style.top = items[i].y + 'px';
     }
   }
 
@@ -915,11 +926,13 @@ export class Viewer {
     else dir = new THREE.Vector3(1.05, 0.92, 1.25);
     dir.normalize();
     const target = new THREE.Vector3(center.x, box.min.y + size.y * (view === 'top' ? 0.5 : 0.44), center.z);
-    const pos = target.clone().add(dir.multiplyScalar(dist));
     this.camera.up.set(0, 1, 0);
+    let pos;
     if (view === 'top') {
-      this.camera.position.set(center.x, box.max.y + dist, center.z + 0.001);
       this.camera.up.set(0, 0, -1);
+      pos = new THREE.Vector3(center.x, box.max.y + dist, center.z + 0.001);
+    } else {
+      pos = target.clone().add(dir.normalize().multiplyScalar(dist));
     }
     if (animate) this._tweenCamera(pos, target, 620);
     else { this.camera.position.copy(pos); this.controls.target.copy(target); this.controls.update(); }
@@ -1068,6 +1081,7 @@ export class Viewer {
     this.camera.rotation.set(this.walkPitch, this.walkYaw, 0);
     this.options.onViewChange?.('walk');
     this.walkHint?.classList.add('is-on');
+    this.walkPad?.classList.add('is-on');
     this.canvas.requestPointerLock?.();
   }
 
@@ -1078,6 +1092,7 @@ export class Viewer {
     document.body.classList.remove('walking');
     this.controls.enabled = true;
     this.walkHint?.classList.remove('is-on');
+    this.walkPad?.classList.remove('is-on');
     if (document.pointerLockElement === this.canvas) document.exitPointerLock?.();
     if (revert) {
       this._currentView = 'iso';

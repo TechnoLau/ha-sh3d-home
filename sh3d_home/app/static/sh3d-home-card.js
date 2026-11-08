@@ -79,9 +79,18 @@ class Sh3dHomeCard extends HTMLElement {
     if (!this._hass) return;
     try {
       if (typeof this._hass.callWS !== 'function') throw new Error('Home Assistant API nicht verfügbar');
+      const list = await this._hass.callWS({
+        type: 'supervisor/api',
+        endpoint: '/addons',
+        method: 'get',
+      });
+      const app = (list?.addons || []).find(a =>
+        a.name === 'SH3D Home' || String(a.slug || '').endsWith('_sh3d_home') || String(a.slug || '') === 'sh3d_home'
+      );
+      if (!app) throw new Error('SH3D Home Add-on nicht gefunden');
       const info = await this._hass.callWS({
         type: 'supervisor/api',
-        endpoint: '/addons/sh3d_home/info',
+        endpoint: `/addons/${app.slug}/info`,
         method: 'get',
       });
       const ingress = info?.ingress_url || info?.ingress_entry;

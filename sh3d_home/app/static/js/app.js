@@ -189,6 +189,16 @@ function ensureViewer() {
   });
   window.__sh3dViewer = viewer;
   viewer.walkHint = $('#walkHint');
+  viewer.walkPad = $('#walkPad');
+  $$('#walkPad [data-move]').forEach(btn => {
+    const key = btn.dataset.move;
+    const add = e => { e.preventDefault(); viewer.movePad.add(key); };
+    const del = e => { e.preventDefault(); viewer.movePad.delete(key); };
+    btn.addEventListener('pointerdown', add);
+    btn.addEventListener('pointerup', del);
+    btn.addEventListener('pointerleave', del);
+    btn.addEventListener('pointercancel', del);
+  });
   viewer.onObjectClick = onSceneObjectClick;
   viewer.onObjectLongPress = onSceneObjectLongPress;
   viewer.onFloatClick = onFloatClick;
@@ -279,6 +289,19 @@ function bindShell() {
       else document.body.classList.remove('sidebar-open');
     }
   });
+  ['dragenter', 'dragover'].forEach(ev => els.stage.addEventListener(ev, e => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault(); els.stage.classList.add('is-drop');
+  }));
+  ['dragleave', 'drop'].forEach(ev => els.stage.addEventListener(ev, e => {
+    if (ev === 'drop' && e.dataTransfer?.files?.length) {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file?.name.toLowerCase().endsWith('.sh3d')) uploadModel(file);
+      else toast('Bitte eine .sh3d-Datei ablegen', true);
+    }
+    els.stage.classList.remove('is-drop');
+  }));
   window.addEventListener('beforeunload', () => {
     if (state.saveTimer) { clearTimeout(state.saveTimer); saveConfig(); }
   });
@@ -727,12 +750,18 @@ function renderRulesTab(body, obj, m) {
     const rules2 = (m?.rules || []).map((r, i) => i === Number(b.dataset.ruleToggle) ? { ...r, enabled: r.enabled === false } : r);
     updateMapping(obj, { rules: rules2 });
   }));
-  $('#presetPc').addEventListener('click', () => openRuleModal(obj, null, {
-    name: 'PC an → Bildschirm',
-    match: 'all',
-    conditions: [{ entity_id: m?.entity_id || '', attribute: 'state', op: 'is', value: 'on' }],
-    effect: { type: 'screen' },
-  }));
+  $('#presetPc').addEventListener('click', () => {
+    const pc = Object.values(state.states).find(e => {
+      const d = domainOf(e.entity_id);
+      return ['binary_sensor', 'switch', 'device_tracker'].includes(d) && /(^|[^a-z])(pc|computer|rechner|desktop)([^a-z]|$)/i.test(`${e.entity_id} ${e.attributes?.friendly_name || ''}`);
+    });
+    openRuleModal(obj, null, {
+      name: 'PC an → Bildschirm',
+      match: 'all',
+      conditions: [{ entity_id: pc?.entity_id || m?.entity_id || '', attribute: 'state', op: 'is', value: pc ? 'on' : 'on' }],
+      effect: { type: 'screen' },
+    });
+  });
   $('#presetAvail').addEventListener('click', () => openRuleModal(obj, null, {
     name: 'Gerät verfügbar',
     match: 'all',
@@ -1307,7 +1336,7 @@ function refreshVisibleStates(entityId) {
   if (refreshTimer) return;
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
-    renderObjects();
+    updateObjectStates();
     if (state.selectedId && els.inspector.classList.contains('is-open')) {
       const obj = state.scene?.objects.find(o => o.id === state.selectedId);
       if (obj) {
@@ -1324,6 +1353,23 @@ function refreshVisibleStates(entityId) {
     }
     updateStatus();
   }, 220);
+}
+
+function updateObjectStates() {
+  if (!state.scene) return;
+  const rooms = new Map(state.scene.rooms.map(r => [r.id, r]));
+  $$('.object-item', els.objectList).forEach(el => {
+    const obj = state.scene.objects.find(o => o.id === el.dataset.id);
+    if (!obj) return;
+    const m = state.config?.mappings?.[obj.id];
+    const entity = m?.entity_id ? state.states[m.entity_id] : null;
+    const valueEl = el.querySelector('.object-state');
+    const dot = el.querySelector('.mapped-dot');
+    if (valueEl) valueEl.textContent = entity ? stateLabel(entity, obj.kind) : (m ? 'Regel' : 'zuordnen');
+    if (dot) dot.classList.toggle('off', !m?.entity_id);
+    const sub = el.querySelector('.object-sub');
+    if (sub) sub.textContent = `${rooms.get(obj.room)?.name || KIND[obj.kind]?.label || ''}${m?.entity_id ? ' · ' + (entity?.attributes?.friendly_name || '') : ''}`;
+  });
 }
 
 function updateHAStatus() {
