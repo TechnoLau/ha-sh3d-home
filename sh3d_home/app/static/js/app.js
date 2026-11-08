@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.3.7';
+import { Viewer } from './viewer.js?v=0.4.0';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.3.7';
+} from './rules.js?v=0.4.0';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -156,6 +156,7 @@ async function openModel(model) {
     renderObjects();
     ensureViewer();
     viewer.setTheme(document.body.classList.contains('night'));
+    viewer.setTimeOfDay(state.config?.scene?.timeOfDay || (document.body.classList.contains('night') ? 'night' : 'day'));
     viewer.modelBase = new URL(`models/${model.id}/assets/`, API).href;
     viewer.progress((n, total) => {
       state.loader = { n, total };
@@ -1030,7 +1031,7 @@ function renderLookTab(body, obj, m) {
       return `<div class="section">
         <div class="section-head"><h3>Lichtpunkt (LED)</h3><span class="hint" style="margin:0">nur Lampe</span></div>
         <div class="slider-row"><span style="width:16px;font-size:10px">X</span><input type="range" id="ledX" min="-150" max="150" step="1" value="${lx}"><output>${lx.toFixed(0)} cm</output></div>
-        <div class="slider-row"><span style="width:16px;font-size:10px">Y</span><input type="range" id="ledY" min="0" max="${Math.round(obj.height * 1.25)}" step="1" value="${ly}"><output>${ly.toFixed(0)} cm</output></div>
+        <div class="slider-row"><span style="width:16px;font-size:10px">Y</span><input type="range" id="ledY" min="-100" max="${Math.round(obj.height * 1.25)}" step="1" value="${ly}"><output>${ly.toFixed(0)} cm</output></div>
         <div class="slider-row"><span style="width:16px;font-size:10px">Z</span><input type="range" id="ledZ" min="-150" max="150" step="1" value="${lz}"><output>${lz.toFixed(0)} cm</output></div>
         <div class="chip-row" style="margin-top:7px"><button class="chip" data-led="top">LED oben</button><button class="chip" data-led="middle">Mitte</button><button class="chip" data-led="bottom">Unten</button><button class="chip" data-led="reset">Zurücksetzen</button></div>
         <p class="hint">Der Punkt ist relativ zur Lampe. Der gelbe Marker im 3D-Modell zeigt die LED; Licht und Lichtpool wandern mit.</p>
@@ -1414,6 +1415,7 @@ function openSettingsModal() {
         <div class="toggle-row"><div class="toggle-copy"><strong>Raumlabels</strong><small>Namen und Flächen im Modell</small></div><button class="switch ${s.showLabels !== false ? 'is-on' : ''}" id="setLabels"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Decken</strong><small>Halbtransparente Decken anzeigen</small></div><button class="switch ${s.showCeilings ? 'is-on' : ''}" id="setCeilings"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Sanfte Drehung</strong><small>Kamera langsam kreisen lassen</small></div><button class="switch ${s.autoRotate ? 'is-on' : ''}" id="setRotate"></button></div>
+        <div class="field"><label>Tageszeit</label><div class="segmented" id="setTime"><button data-time="day" class="${(s.timeOfDay || 'day') === 'day' ? 'is-active' : ''}">Tag</button><button data-time="evening" class="${s.timeOfDay === 'evening' ? 'is-active' : ''}">Abend</button><button data-time="night" class="${s.timeOfDay === 'night' ? 'is-active' : ''}">Nacht</button></div></div>
       </div>
       <div class="modal-section"><h3>Modell</h3>
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
@@ -1433,6 +1435,7 @@ function openSettingsModal() {
   let next = {
     showLabels: s.showLabels !== false, showCeilings: !!s.showCeilings, autoRotate: !!s.autoRotate,
     showFloors: s.showFloors !== false, stackLevels: s.stackLevels !== false, wallMode: s.wallMode || 'solid',
+    timeOfDay: s.timeOfDay || 'day',
   };
   const applyScene = () => {
     state.config.scene = { ...state.config.scene, ...next };
@@ -1442,6 +1445,7 @@ function openSettingsModal() {
     viewer?.setLabels(next.showLabels);
     viewer?.setCeilings(next.showCeilings);
     viewer?.setAutoRotate(next.autoRotate);
+    viewer?.setTimeOfDay(next.timeOfDay);
     state.stackLevels = next.stackLevels;
     $('#btnRotate').classList.toggle('is-active', next.autoRotate);
     scheduleSave(true);
@@ -1458,6 +1462,11 @@ function openSettingsModal() {
   $$('#setWalls [data-wm]').forEach(b => b.addEventListener('click', () => {
     next.wallMode = b.dataset.wm;
     $$('#setWalls button').forEach(x => x.classList.toggle('is-active', x === b));
+    applyScene();
+  }));
+  $$('#setTime [data-time]').forEach(b => b.addEventListener('click', () => {
+    next.timeOfDay = b.dataset.time;
+    $$('#setTime button').forEach(x => x.classList.toggle('is-active', x === b));
     applyScene();
   }));
   $('#setUpload').addEventListener('click', () => { closeModal(); pickFile(); });

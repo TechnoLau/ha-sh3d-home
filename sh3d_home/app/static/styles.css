@@ -553,3 +553,11 @@ body.room-only .overlay { background: transparent; backdrop-filter: none; align-
 body.room-only .overlay .modal { margin: 0 auto; }
 
 @media (max-width: 520px) { #btnWalls, #btnFloors, #btnRotate { display: none; } }
+
+/* walk-mode center crosshair and interaction point */
+.walk-crosshair { position: absolute; z-index: 9; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%,-50%); pointer-events: none; display: none; opacity: .9; }
+.walk-crosshair.is-on { display: block; }
+.walk-crosshair::before, .walk-crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,.85); box-shadow: 0 0 4px rgba(0,0,0,.7); }
+.walk-crosshair::before { width: 22px; height: 1px; top: 10px; left: 0; }
+.walk-crosshair::after { width: 1px; height: 22px; left: 10px; top: 0; }
+.walk-crosshair i { position: absolute; left: 8px; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: #ffcf8a; box-shadow: 0 0 8px rgba(255,190,90,.95); }

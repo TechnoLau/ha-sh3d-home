@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.7';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.0';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -71,6 +71,8 @@ export class Viewer {
     this.walking = false;
     this.walkYaw = 0;
     this.walkPitch = 0;
+    this.walkFov = 68;
+    this.walkFloorY = null;
     this.keys = new Set();
     this.movePad = new Set();
     this.pointer = { down: false, x: 0, y: 0, moved: 0, t: 0, objectId: null, longTimer: null };
@@ -124,6 +126,10 @@ export class Viewer {
 
     this._setupLights();
     this._setupGround();
+    this.crosshair = document.createElement('div');
+    this.crosshair.className = 'walk-crosshair';
+    this.crosshair.innerHTML = '<i></i>';
+    (this.canvas.parentElement || document.body).appendChild(this.crosshair);
     this._bindEvents();
     this._resize = this._resize.bind(this);
     this._onResize = new ResizeObserver(() => this._resize());
@@ -171,6 +177,69 @@ export class Viewer {
     this.siteDisc.rotation.x = -Math.PI / 2;
     this.siteDisc.position.y = -0.05;
     this.scene.add(this.siteDisc);
+    const meadowMat = new THREE.MeshStandardMaterial({ color: '#6f9b57', roughness: 1, metalness: 0 });
+    this.meadow = new THREE.Mesh(new THREE.CircleGeometry(48, 64), meadowMat);
+    this.meadow.rotation.x = -Math.PI / 2;
+    this.meadow.position.y = -0.075;
+    this.meadow.receiveShadow = true;
+    this.scene.add(this.meadow);
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 32; skyCanvas.height = 256;
+    this.skyCanvas = skyCanvas;
+    this.skyTexture = new THREE.CanvasTexture(skyCanvas);
+    this.skyTexture.colorSpace = THREE.SRGBColorSpace;
+    this.skyDome = new THREE.Mesh(
+      new THREE.SphereGeometry(72, 32, 18),
+      new THREE.MeshBasicMaterial({ map: this.skyTexture, side: THREE.BackSide, depthWrite: false, fog: false })
+    );
+    this.scene.add(this.skyDome);
+    this.timeOfDay = 'day';
+    this._paintSky('#9fc9e8', '#f4e9d4');
+  }
+
+  _paintSky(top, bottom) {
+    if (!this.skyCanvas) return;
+    const ctx = this.skyCanvas.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, this.skyCanvas.height);
+    g.addColorStop(0, top);
+    g.addColorStop(0.62, bottom);
+    g.addColorStop(1, bottom);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, this.skyCanvas.width, this.skyCanvas.height);
+    this.skyTexture.needsUpdate = true;
+  }
+
+  setTimeOfDay(mode = 'day') {
+    const presets = {
+      day:    { sky: ['#8dc4ea', '#f5ead5'], bg: '#e7e1d5', sun: 2.25, color: '#fff1d8', hemi: 1.55, amb: 0.38, fill: 0.38, grass: '#6f9b57', exposure: 1.08 },
+      evening:{ sky: ['#7b88b5', '#f2b07c'], bg: '#c7a58b', sun: 1.15, color: '#ffd0a0', hemi: 0.82, amb: 0.24, fill: 0.28, grass: '#697553', exposure: 1.02 },
+      night:  { sky: ['#0c1628', '#25374d'], bg: '#141718', sun: 0.22, color: '#9fb6d8', hemi: 0.32, amb: 0.12, fill: 0.18, grass: '#38473c', exposure: 0.9 },
+    };
+    const p = presets[mode] || presets.day;
+    this.timeOfDay = presets[mode] ? mode : 'day';
+    this._paintSky(p.sky[0], p.sky[1]);
+    this.hemi.intensity = p.hemi;
+    this.ambient.intensity = p.amb;
+    this.sun.intensity = p.sun;
+    this.sun.color.set(p.color);
+    this.fill.intensity = p.fill;
+    this.meadow.material.color.set(p.grass);
+    this.renderer.toneMappingExposure = p.exposure;
+    this.ground.material.opacity = mode === 'night' ? 0.26 : 0.14;
+    this.siteDisc.material.opacity = mode === 'night' ? 0.08 : 0.18;
+    this.scene.background = this.transparent ? null : new THREE.Color(p.bg);
+    this.scene.fog = this.transparent ? null : new THREE.Fog(p.bg, 30, 70);
+    this.renderer.setClearColor(p.bg, this.transparent ? 0 : 1);
+    this.renderer.setClearAlpha(this.transparent ? 0 : 1);
+    this._setOutdoorVisible();
+  }
+
+  _setOutdoorVisible() {
+    const show = !this.transparent && !document.body.classList.contains('embed') && !this.roomOnly;
+    if (this.meadow) this.meadow.visible = show;
+    if (this.skyDome) this.skyDome.visible = show;
+    if (this.ground) this.ground.visible = !this.transparent;
+    if (this.siteDisc) this.siteDisc.visible = !this.transparent;
   }
 
   _bindEvents() {
@@ -183,7 +252,13 @@ export class Viewer {
       const hit = this._pick(e.clientX, e.clientY);
       if (hit) this.onObjectDoubleClick?.(hit.object, hit.group);
     });
-    this.canvas.addEventListener('wheel', () => { if (this.walking) this._exitWalk(false); }, { passive: true });
+    this.canvas.addEventListener('wheel', e => {
+      if (!this.walking) return;
+      e.preventDefault();
+      this.walkFov = Math.max(48, Math.min(88, this.walkFov + Math.sign(e.deltaY) * 3));
+      this.camera.fov = this.walkFov;
+      this.camera.updateProjectionMatrix();
+    }, { passive: false });
     window.addEventListener('keydown', e => {
       if (this.walking) {
         this.keys.add(e.code);
@@ -215,18 +290,7 @@ export class Viewer {
   }
 
   setTheme(night = false) {
-    const bg = night ? '#141718' : '#e7e1d5';
-    this.scene.background = this.transparent ? null : new THREE.Color(bg);
-    this.scene.fog = this.transparent ? null : new THREE.Fog(bg, 28, 62);
-    this.renderer.setClearColor(bg, this.transparent ? 0 : 1);
-    this.renderer.setClearAlpha(this.transparent ? 0 : 1);
-    this.hemi.intensity = night ? 0.9 : 1.55;
-    this.ambient.intensity = night ? 0.22 : 0.38;
-    this.sun.intensity = night ? 1.15 : 2.25;
-    this.sun.color.set(night ? '#cfd9e3' : '#fff1d8');
-    this.fill.intensity = night ? 0.6 : 0.38;
-    this.ground.material.opacity = night ? 0.28 : 0.14;
-    this.siteDisc.material.opacity = night ? 0.08 : 0.18;
+    this.setTimeOfDay(night ? 'night' : (this.timeOfDay || 'day'));
   }
 
   async load(sceneData, config, modelBase) {
@@ -288,6 +352,7 @@ export class Viewer {
     this.objVisual = false;
     this.objRoot = null;
     this.objRoomLevels = new Set();
+    this.objFloorLevels = new Set();
     for (const btn of this.floatButtons.values()) btn.el.remove();
     this.floatButtons.clear();
     this.outline?.parent && this.outline.parent.remove(this.outline);
@@ -456,7 +521,7 @@ export class Viewer {
     wrapper.add(glow);
     wrapper.userData.glow = glow;
     if (kind === 'light') {
-      const pl = new THREE.SpotLight('#ffd39a', 0, 9, 1.15, 0.72, 1.45);
+      const pl = new THREE.SpotLight('#ffd39a', 0, 10, 1.38, 0.82, 1.45);
       pl.position.y = obj.height * S * 0.52;
       pl.castShadow = false;
       pl.shadow.mapSize.set(1024, 1024);
@@ -886,17 +951,18 @@ export class Viewer {
       this.root.add(root);
       this.objVisual = true;
       this.objRoomLevels = new Set((info.groups || []).filter(g => g.kind === 'floor' || g.kind === 'ceiling').map(g => g.level));
+      this.objFloorLevels = new Set((info.groups || []).filter(g => g.kind === 'floor').map(g => g.level));
       if (!this.objRoomLevels.size) this.objRoomLevels = new Set(this.levels.keys());
       // Hide the procedurally rendered SH3D visual only on levels covered by
       // the OBJ; other floors keep the normal renderer.
       for (const obj of this.sceneData.objects) {
         const wrapper = this.objectGroups.get(obj.id);
-        if (wrapper?.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level);
+        if (wrapper?.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level) || ['door', 'window'].includes(obj.kind);
       }
       for (const w of this.wallGroups) w.mesh.visible = !this.objRoomLevels.has(w.level);
       for (const { mesh, level, ceiling } of this.roomMeshes) {
         if (ceiling) { mesh.visible = false; }
-        else if (this.objRoomLevels.has(level)) {
+        else if (this.objFloorLevels.has(level)) {
           mesh.visible = true;
           mesh.material.transparent = true;
           mesh.material.opacity = 0;
@@ -950,7 +1016,7 @@ export class Viewer {
     const pool = wrapper.userData.pool;
     const led = wrapper.userData.led;
     for (const item of [point, glow, led]) if (item) item.position.set(x, y, z);
-    if (target) target.position.set(x, -obj.elevation * S + 0.02, z);
+    if (target) target.position.set(x * 1.65, -obj.elevation * S + 0.02, z * 1.65);
     if (pool) pool.position.set(x, -obj.elevation * S + 0.02, z);
     if (led) led.visible = this.selectedId === obj.id && !!mapping;
   }
@@ -1021,6 +1087,11 @@ export class Viewer {
     }
     if (arc) {
       arc.material.opacity = (mapped || local) && vs.open ? 0.5 : 0;
+    }
+    const doorModel = wrapper.userData.model;
+    if (doorModel && (obj.kind === 'door' || obj.kind === 'window')) {
+      const target = (mapped || local) && vs.open ? (obj.kind === 'door' ? -1.15 : 0.55) : 0;
+      doorModel.rotation.y += (target - doorModel.rotation.y) * 0.16;
     }
     wrapper.userData.active = active;
     wrapper.userData.vs = vs;
@@ -1181,7 +1252,7 @@ export class Viewer {
     for (const { mesh, room, level, ceiling } of this.roomMeshes) {
       if (ceiling) { mesh.visible = false; continue; }
       const inRoom = !roomScope || !targetRoom || room === targetRoom;
-      if (!this.objRoomLevels.has(level)) { mesh.visible = inRoom && this.showFloors && activeLevels.has(level); continue; }
+      if (!this.objFloorLevels.has(level)) { mesh.visible = inRoom && this.showFloors && activeLevels.has(level); continue; }
       mesh.visible = inRoom && activeLevels.has(level);
       mesh.material.transparent = true;
       mesh.material.opacity = 0;
@@ -1202,7 +1273,7 @@ export class Viewer {
         if (this.scope.focus === 'isolate') visible = false;
       }
       wrapper.visible = visible;
-      if (wrapper.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level);
+      if (wrapper.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level) || ['door', 'window'].includes(obj.kind);
       const btn = this.floatButtons.get(obj.id);
       if (btn && !visible) btn.el.classList.add('is-hidden');
     }
@@ -1223,6 +1294,11 @@ export class Viewer {
       if (meta.kind === 'floor' && !this.showFloors) visible = false;
       if (meta.kind === 'ceiling' && !this.config?.scene?.showCeilings) visible = false;
       if (meta.kind === 'wall' && this.wallMode === 'hidden') visible = false;
+      if (meta.kind === 'door' || meta.kind === 'window') visible = false;
+      if (meta.kind === 'wall' && roomScope && targetRoom) {
+        const belongs = meta.room === targetRoom || (meta.rooms || []).includes(targetRoom);
+        if (!belongs && this.scope.focus === 'isolate') visible = false;
+      }
       for (const mesh of meshes) {
         mesh.visible = visible;
         if (!visible) continue;
@@ -1278,6 +1354,7 @@ export class Viewer {
     this.renderer.setClearColor(bg, on ? 0 : 1);
     this.ground.visible = !on;
     this.siteDisc.visible = !on;
+    this._setOutdoorVisible();
   }
 
   setZoomOnly(on) {
@@ -1292,6 +1369,7 @@ export class Viewer {
     this.roomOnly = !!on;
     if (this.renderer) this.renderer.shadowMap.enabled = true;
     if (this.sun) this.sun.castShadow = true;
+    this._setOutdoorVisible();
   }
 
   toggleLocal(id) {
@@ -1450,6 +1528,8 @@ export class Viewer {
     this._walkDragging = this.walking;
     if (this.walking) {
       if (document.pointerLockElement !== this.canvas && this.canvas.requestPointerLock) this.canvas.requestPointerLock();
+      const hit = this._walkPick();
+      if (hit?.object) this.onObjectClick?.(hit.object, hit.group);
       return;
     }
     const hit = this._pick(e.clientX, e.clientY);
@@ -1514,9 +1594,54 @@ export class Viewer {
     this.camera.rotation.x = this.walkPitch;
   }
 
+  _walkPick() {
+    const rect = this.canvas.getBoundingClientRect();
+    return this._pick(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  _walkFloorAt(x, z) {
+    const raycaster = new THREE.Raycaster();
+    const origin = new THREE.Vector3(x, this.camera.position.y + 0.6, z);
+    raycaster.set(origin, new THREE.Vector3(0, -1, 0));
+    const candidates = [];
+    for (const { mesh, ceiling } of this.roomMeshes) if (!ceiling && mesh.visible) candidates.push(mesh);
+    for (const { meta, meshes } of this.objGroups.values()) {
+      if (meta.kind === 'floor' || meta.kind === 'ground' || meta.kind === 'furniture') {
+        for (const mesh of meshes) if (mesh.visible) candidates.push(mesh);
+      }
+    }
+    for (const wrapper of this.objectGroups.values()) {
+      if (wrapper.visible) wrapper.traverse(n => { if (n.isMesh && n.visible) candidates.push(n); });
+    }
+    const hits = raycaster.intersectObjects(candidates, true);
+    for (const hit of hits) {
+      if (hit.point.y <= this.camera.position.y + 0.35) return hit.point.y;
+    }
+    return null;
+  }
+
+  _walkBlocked(next) {
+    const from = this.camera.position.clone();
+    from.y = (this.walkFloorY ?? (this.camera.position.y - 1.62)) + 1.05;
+    const dir = next.clone().sub(this.camera.position);
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-8) return false;
+    dir.normalize();
+    const ray = new THREE.Raycaster(from, dir, 0, 0.42);
+    const walls = [...this.wallGroups.map(w => w.mesh)];
+    for (const { meta, meshes } of this.objGroups.values()) {
+      if (meta.kind === 'wall') for (const m of meshes) if (m.visible) walls.push(m);
+    }
+    const hits = ray.intersectObjects(walls, true);
+    return hits.some(h => h.distance < 0.38);
+  }
+
   enterWalk() {
     if (this.walking) return;
     this.walking = true;
+    this.walkFov = 68;
+    this.camera.fov = this.walkFov;
+    this.camera.updateProjectionMatrix();
     this._currentView = 'walk';
     this._wasPosition = this.camera.position.clone();
     this._wasTarget = this.controls.target.clone();
@@ -1533,6 +1658,7 @@ export class Viewer {
     this.options.onViewChange?.('walk');
     this.walkHint?.classList.add('is-on');
     this.walkPad?.classList.add('is-on');
+    this.crosshair.classList.add('is-on');
     this.canvas.requestPointerLock?.();
   }
 
@@ -1544,6 +1670,9 @@ export class Viewer {
     this.controls.enabled = true;
     this.walkHint?.classList.remove('is-on');
     this.walkPad?.classList.remove('is-on');
+    this.crosshair.classList.remove('is-on');
+    this.camera.fov = 42;
+    this.camera.updateProjectionMatrix();
     if (document.pointerLockElement === this.canvas) document.exitPointerLock?.();
     if (revert) {
       this._currentView = 'iso';
@@ -1626,9 +1755,18 @@ export class Viewer {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft') || this.movePad.has('l')) move.sub(right);
     if (move.lengthSq() > 0) {
       move.normalize().multiplyScalar(speed);
-      this.camera.position.add(move);
+      const next = this.camera.position.clone().add(move);
+      if (!this._walkBlocked(next)) this.camera.position.x = next.x, this.camera.position.z = next.z;
     }
-    this.camera.position.y = this._levelY(this.levelId) + 1.62;
+    const floor = this._walkFloorAt(this.camera.position.x, this.camera.position.z);
+    const targetFloor = floor ?? (this._levelY(this.levelId));
+    if (this.walkFloorY == null) this.walkFloorY = targetFloor;
+    if (targetFloor - this.walkFloorY > 0.34) {
+      // too high: stay at the previous height instead of climbing furniture
+    } else {
+      this.walkFloorY += (targetFloor - this.walkFloorY) * 0.35;
+    }
+    this.camera.position.y = this.walkFloorY + 1.62;
   }
 
   destroy() {

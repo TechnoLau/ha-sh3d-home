@@ -33,6 +33,20 @@ def _point_in_poly(x: float, y: float, points: list[list[float]]) -> bool:
     return inside
 
 
+def _dist_to_poly(x: float, y: float, points: list[list[float]]) -> float:
+    best = 1e18
+    n = len(points)
+    for i in range(n):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        l2 = dx * dx + dy * dy
+        t = 0 if l2 == 0 else max(0, min(1, ((x - x1) * dx + (y - y1) * dy) / l2))
+        px, py = x1 + t * dx, y1 + t * dy
+        best = min(best, (x - px) ** 2 + (y - py) ** 2)
+    return math.sqrt(best)
+
+
 def _room_for(scene: dict[str, Any], x: float, y: float, level: str, threshold: float = 1e12) -> str | None:
     for room in scene.get("rooms", []):
         if room.get("level") == level and _point_in_poly(x, y, room.get("points", [])):
@@ -157,12 +171,23 @@ def parse_obj(obj_path: Path, scene: dict[str, Any]) -> dict[str, Any]:
         level = _level_for(scene, miny)
         kind = kind_for(g["name"], g["materials"], miny, level)
         room = _room_for(scene, cx, cz, level)
+        near_rooms = []
+        if kind == "wall":
+            for candidate in scene.get("rooms", []):
+                if candidate.get("level") != level:
+                    continue
+                if _point_in_poly(cx, cz, candidate.get("points", [])) or _dist_to_poly(cx, cz, candidate.get("points", [])) <= 20:
+                    near_rooms.append(candidate["id"])
+            if not near_rooms and room:
+                near_rooms = [room]
+            if room is None and near_rooms:
+                room = near_rooms[0]
         meta = {
             "name": g["name"], "kind": kind, "level": level, "room": room,
             "center": [round(cx, 2), round(cy, 2), round(cz, 2)],
             "bbox": {"minX": round(minx, 2), "maxX": round(maxx, 2), "minY": round(miny, 2),
                      "maxY": round(maxy, 2), "minZ": round(minz, 2), "maxZ": round(maxz, 2)},
-            "materials": sorted(g["materials"]), "faces": g["faces"],
+            "materials": sorted(g["materials"]), "faces": g["faces"], "rooms": near_rooms,
         }
         meta_groups.append(meta)
         if kind in ("wall", "ground", "floor", "ceiling"):

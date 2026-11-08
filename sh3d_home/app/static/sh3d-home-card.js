@@ -103,10 +103,12 @@ class Sh3dHomeCard extends HTMLElement {
     this._rendered = true;
     const height = this._height();
     const roomOnly = (this._config.mode || 'home') === 'room';
+    if (roomOnly) this.setAttribute('room-card', ''); else this.removeAttribute('room-card');
     this.shadowRoot.innerHTML = `
       <style>
-        :host { display: block; }
-        .room-card { background: transparent !important; }
+        :host { display: block; background: transparent !important; --ha-card-background: transparent; --ha-card-box-shadow: none; }
+        :host([room-card]) { background: transparent !important; }
+        .room-card { background: transparent !important; box-shadow: none !important; border: 0 !important; }
         .wrap { position: relative; border-radius: var(--ha-card-border-radius, 12px); overflow: hidden; background: #e7e1d5; }
         .wrap.room-card { background: transparent !important; }
         .frame { width: 100%; height: ${height}px; border: 0; display: block; background: #e7e1d5; }
