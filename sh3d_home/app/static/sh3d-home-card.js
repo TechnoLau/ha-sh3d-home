@@ -65,6 +65,7 @@ class Sh3dHomeCard extends HTMLElement {
       type: 'supervisor/api',
       endpoint: '/ingress/session',
       method: 'post',
+      data: {},
     });
     if (!response?.session) throw new Error('Keine Ingress-Sitzung erhalten');
     document.cookie = `ingress_session=${response.session};path=/api/hassio_ingress/;SameSite=Strict${

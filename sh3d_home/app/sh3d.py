@@ -328,6 +328,29 @@ def import_sh3d(source: Path, target: Path, model_id: str, display_name: str | N
         if "Home.xml" not in z.namelist():
             raise ValueError("Im Archiv fehlt Home.xml – ist das wirklich eine .sh3d-Datei?")
         names = _safe_extract(z, assets)
+    # Sweet Home 3D archives occasionally reference textures that were not
+    # embedded. Remove those map lines so the material's Kd color is used
+    # instead of a black/missing texture.
+    for mtl_path in assets.rglob("*.mtl"):
+        try:
+            lines = mtl_path.read_text(errors="ignore").splitlines()
+            changed = False
+            out = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.lower().startswith(("map_kd", "map_ka", "map_bump", "bump")):
+                    ref = stripped.split(None, 1)[1].strip().strip('"').replace("\\", "/") if len(stripped.split(None, 1)) > 1 else ""
+                    candidate = (mtl_path.parent / ref).resolve()
+                    if ref and not candidate.exists():
+                        out.append("# missing texture: " + line)
+                        changed = True
+                        continue
+                out.append(line)
+            if changed:
+                mtl_path.write_text("\n".join(out) + "\n")
+        except OSError:
+            pass
+
     home_path = assets / "Home.xml"
     root = ET.parse(home_path).getroot()
 

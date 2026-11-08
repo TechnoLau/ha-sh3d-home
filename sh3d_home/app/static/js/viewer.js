@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.0';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.1';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -349,6 +349,13 @@ export class Viewer {
     }
   }
 
+  _roomAtStrict(x, y, level) {
+    for (const r of this.sceneData.rooms) {
+      if (r.level === level && pointInPoly(x, y, r.points)) return r.id;
+    }
+    return null;
+  }
+
   _roomAt(x, y, level) {
     const rooms = this.sceneData.rooms.filter(r => r.level === level);
     for (const r of rooms) if (pointInPoly(x, y, r.points)) return r.id;
@@ -383,16 +390,16 @@ export class Viewer {
       const rooms = new Set();
       for (let i = 0; i <= 12; i++) {
         const t = i / 12;
-        const r = this._roomAt(piece.x1 + (piece.x2 - piece.x1) * t, piece.y1 + (piece.y2 - piece.y1) * t, piece.level);
+        const r = this._roomAtStrict(piece.x1 + (piece.x2 - piece.x1) * t, piece.y1 + (piece.y2 - piece.y1) * t, piece.level);
         if (r) rooms.add(r);
       }
       // Walls on the boundary often have a midpoint just outside the polygon.
       for (const room of this.sceneData.rooms.filter(r => r.level === piece.level)) {
         const d = this._distToPoly(midX, midY, room.points);
-        if (d < Math.max(55, piece.thickness * 1.2)) rooms.add(room.id);
+        if (d < Math.max(24, piece.thickness * 0.9)) rooms.add(room.id);
       }
       mesh.userData.kind = 'wall';
-      mesh.userData.room = this._roomAt(midX, midY, piece.level);
+      mesh.userData.room = this._roomAtStrict(midX, midY, piece.level) || this._roomAt(midX, midY, piece.level);
       mesh.userData.rooms = [...rooms];
       mesh.userData.level = piece.level;
       lg.add(mesh);
@@ -998,6 +1005,8 @@ export class Viewer {
 
   setRoomOnly(on) {
     this.roomOnly = !!on;
+    if (this.renderer) this.renderer.shadowMap.enabled = !on;
+    if (this.sun) this.sun.castShadow = !on;
   }
 
   toggleLocal(id) {
@@ -1068,7 +1077,7 @@ export class Viewer {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const max = Math.max(size.x, size.z, 1.2);
-    const dist = Math.max(2.4, max * (view === 'top' ? 1.25 : 1.52) + 2.2);
+    const dist = Math.max(2.4, max * (view === 'top' ? 1.25 : (this.roomOnly ? 1.95 : 1.52)) + (this.roomOnly ? 2.8 : 2.2));
     let dir;
     if (view === 'top') dir = new THREE.Vector3(0.0001, 1, 0.0001);
     else if (view === 'front') dir = new THREE.Vector3(0, 0.24, 1);
