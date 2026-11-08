@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.8';
+import { Viewer } from './viewer.js?v=0.4.9';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.8';
+} from './rules.js?v=0.4.9';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -384,7 +384,7 @@ function updateEditButton() {
 function updateProject() {
   if (!state.model) {
     els.modelName.textContent = 'Kein Modell';
-    els.modelMeta.textContent = 'Lade eine .sh3d-Datei hoch';
+    els.modelMeta.textContent = 'Importiere OBJ, SH3D, MTL und Texturen';
     return;
   }
   const st = state.model.stats || {};
