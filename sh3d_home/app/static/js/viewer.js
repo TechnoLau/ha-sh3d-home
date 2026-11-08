@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.6';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.7';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -1178,18 +1178,20 @@ export class Viewer {
     for (const [id, group] of this.levelGroups) group.visible = activeLevels.has(id);
     const roomScope = this.scope.mode === 'room' || (this.scope.focus !== 'none' && this.scope.room);
     const targetRoom = this.scope.room;
-    for (const { mesh, level, ceiling } of this.roomMeshes) {
+    for (const { mesh, room, level, ceiling } of this.roomMeshes) {
       if (ceiling) { mesh.visible = false; continue; }
-      if (!this.objRoomLevels.has(level)) { mesh.visible = this.showFloors && activeLevels.has(level); continue; }
-      mesh.visible = activeLevels.has(level);
+      const inRoom = !roomScope || !targetRoom || room === targetRoom;
+      if (!this.objRoomLevels.has(level)) { mesh.visible = inRoom && this.showFloors && activeLevels.has(level); continue; }
+      mesh.visible = inRoom && activeLevels.has(level);
       mesh.material.transparent = true;
       mesh.material.opacity = 0;
       mesh.material.depthWrite = false;
     }
     for (const w of this.wallGroups) {
       if (!this.objRoomLevels.has(w.level)) {
-        w.mesh.visible = this.wallMode !== 'hidden' && activeLevels.has(w.level);
-        if (w.mesh.visible) this._setWallVisual(w.mesh, this.wallMode === 'transparent' ? .24 : 1);
+        const inRoom = !roomScope || !targetRoom || w.room === targetRoom || w.rooms?.includes(targetRoom);
+        w.mesh.visible = inRoom && this.wallMode !== 'hidden' && activeLevels.has(w.level);
+        if (w.mesh.visible) this._setWallVisual(w.mesh, (roomScope && targetRoom) ? .28 : (this.wallMode === 'transparent' ? .24 : 1));
       }
     }
     for (const obj of this.sceneData.objects) {
