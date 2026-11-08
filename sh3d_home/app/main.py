@@ -11,6 +11,7 @@ import re
 import shutil
 import tempfile
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -236,7 +237,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.4.6"),
+        "version": os.environ.get("SH3D_VERSION", "0.4.7"),
     })
 
 
@@ -377,6 +378,65 @@ async def api_attach_obj(request: web.Request) -> web.Response:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+
+async def _store_package(sh3d_path: Path, zip_path: Path, display_name: str | None, source_name: str) -> dict[str, Any]:
+    meta = await asyncio.to_thread(STORE.add_model, sh3d_path, display_name)
+    folder = MODELS_DIR / meta["id"]
+    scene_file = folder / "scene.json"
+    scene = json.loads(scene_file.read_text())
+    obj = await asyncio.to_thread(obj_import.import_obj_zip, zip_path, folder, scene, meta["name"])
+    obj["importedAt"] = now_iso()
+    scene["obj"] = obj
+    scene_file.write_text(json.dumps(scene, ensure_ascii=False))
+    STORE.scene_cache[meta["id"]] = scene
+    meta["sourceFile"] = source_name
+    meta["obj"] = {"objFile": obj["objFile"], "mtlFile": obj["mtlFile"], "groups": len(obj["groups"]), "objects": len(obj["objects"]), "importedAt": obj["importedAt"]}
+    STORE.write_meta(meta["id"], meta)
+    STORE.models[meta["id"]] = meta
+    return meta
+
+
+async def api_import_package(request: web.Request) -> web.Response:
+    """Upload OBJ + SH3D + MTL + textures as separate multipart fields."""
+    reader = await request.multipart()
+    temp_dir = Path(tempfile.mkdtemp(prefix="sh3d-package-"))
+    files: dict[str, Path] = {}
+    textures: list[Path] = []
+    display_name = None
+    try:
+        async for field in reader:
+            if field.name == "name":
+                display_name = (await field.text()).strip() or None
+                continue
+            if field.name not in ("obj", "sh3d", "mtl", "textures", "texture"):
+                await field.release()
+                continue
+            filename = Path(field.filename or f"{field.name}.bin").name
+            dest = temp_dir / filename
+            with dest.open("wb") as out:
+                while True:
+                    chunk = await field.read_chunk(1024 * 512)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+            if field.name in ("textures", "texture"):
+                textures.append(dest)
+            else:
+                files[field.name] = dest
+        if "obj" not in files or "sh3d" not in files:
+            raise web.HTTPBadRequest(text="Bitte OBJ und SH3D auswählen")
+        zip_path = temp_dir / "package.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            for path in [files["obj"], files["sh3d"]] + ([files["mtl"]] if "mtl" in files else []) + textures:
+                archive.write(path, path.name)
+        meta = await _store_package(files["sh3d"], zip_path, display_name or files["sh3d"].stem, files["sh3d"].name)
+        return json_response({"ok": True, "model": meta})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 async def api_upload(request: web.Request) -> web.Response:
     if request.content_length and request.content_length > MAX_UPLOAD + 1_000_000:
         raise web.HTTPRequestEntityTooLarge(max_size=MAX_UPLOAD, actual_size=request.content_length)
@@ -482,7 +542,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.6"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.7"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -552,7 +612,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.6",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.7",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -562,7 +622,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.6"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.7"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
@@ -640,6 +700,7 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/models/{model_id}", api_delete_model)
     app.router.add_get("/api/models/{model_id}/assets/{path:.*}", api_assets)
     app.router.add_post("/api/models", api_upload)
+    app.router.add_post("/api/import-package", api_import_package)
     app.router.add_post("/api/models/{model_id}/obj", api_attach_obj)
     app.router.add_post("/api/import/scan", api_scan)
     app.router.add_get("/api/entities", api_entities)

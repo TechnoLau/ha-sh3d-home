@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.6';
+import { Viewer } from './viewer.js?v=0.4.7';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.6';
+} from './rules.js?v=0.4.7';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -79,6 +79,7 @@ async function init() {
   updateEditButton();
   bindShell();
   await Promise.all([loadEntities(), loadModels()]);
+  if (!state.models.length) openImportWizard();
   connectWS();
 }
 
@@ -130,7 +131,7 @@ async function loadModels() {
     return;
   }
   setEmpty(false);
-  const wanted = params.get('model');
+  const wanted = params.get('model') || localStorage.getItem('sh3d.lastModel');
   const model = state.models.find(m => m.id === wanted) || state.models[0];
   await openModel(model);
 }
@@ -138,6 +139,7 @@ async function loadModels() {
 async function openModel(model) {
   if (!model) return;
   state.model = model;
+  try { localStorage.setItem('sh3d.lastModel', model.id); } catch {}
   state.selectedId = null;
   closeInspector();
   showLoader(true, 'Modell wird geladen');
@@ -271,8 +273,8 @@ function applyInitialScope() {
 
 // ------------------------------------------------------------------ shell events
 function bindShell() {
-  $('#btnUpload').addEventListener('click', pickFile);
-  $('#btnEmptyUpload').addEventListener('click', pickFile);
+  $('#btnUpload').addEventListener('click', openImportWizard);
+  $('#btnEmptyUpload').addEventListener('click', openImportWizard);
   $('#btnChangeModel').addEventListener('click', openModelPicker);
   $('#btnSidebarOpen').addEventListener('click', () => document.body.classList.add('sidebar-open'));
   $('#btnSidebarClose').addEventListener('click', () => document.body.classList.remove('sidebar-open'));
@@ -361,9 +363,7 @@ function bindShell() {
   ['dragleave', 'drop'].forEach(ev => els.stage.addEventListener(ev, e => {
     if (ev === 'drop' && e.dataTransfer?.files?.length) {
       e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file?.name.toLowerCase().match(/\.(sh3d|zip)$/)) uploadModel(file);
-      else toast('Bitte eine .sh3d- oder .zip-Datei ablegen', true);
+      openImportWizard();
     }
     els.stage.classList.remove('is-drop');
   }));
@@ -1424,10 +1424,8 @@ function openSettingsModal() {
       <div class="modal-section"><h3>Modell</h3>
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
         <div class="btn-row" style="margin-top:9px"><button class="btn btn-small" id="setUpload"><svg><use href="#i-upload"/></svg> Neues Modell</button><a class="btn btn-small" href="models/${state.model.id}/source" download><svg><use href="#i-copy"/></svg> .sh3d</a></div>
-        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setScan">Ordner scannen</button><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
-        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setObj"><svg><use href="#i-cube"/></svg> OBJ-Ansicht (ZIP)</button></div>
-        <p class="hint">OBJ-ZIP mit <code>.obj</code>, <code>.mtl</code> und Texturen. Die OBJ-Ansicht ersetzt die Oberfläche; Zimmer, Geräte und Zuordnungen bleiben aus der SH3D-Datei erhalten. ${state.scene?.obj ? '<b>OBJ aktiv.</b>' : ''}</p>
-        <p class="hint">Beim Start werden .sh3d-Dateien aus <code>/share/sh3d-home</code>, <code>/share</code> und <code>/media</code> automatisch importiert.</p>
+        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
+        <p class="hint">Neue Modelle werden über <b>Neu</b> mit OBJ, SH3D, MTL und Texturen importiert.</p>
       </div>
       <div class="modal-section"><h3>Verbindung</h3>
         <div class="insight"><svg><use href="#i-cloud"/></svg><div>Home Assistant: <b>${state.connected ? 'verbunden' : 'nicht verbunden'}</b> · ${state.entities.length} Entitäten<br>Add-on: SH3D Home ${state.model ? '' : ''}<br>Diese Instanz: <code>${escapeHtml(location.host)}</code></div></div>
@@ -1479,11 +1477,7 @@ function openSettingsModal() {
     $$('#setTime button').forEach(x => x.classList.toggle('is-active', x === b));
     applyScene();
   }));
-  $('#setUpload').addEventListener('click', () => { closeModal(); pickFile(); });
-  $('#setObj').addEventListener('click', () => $('#objInput').click());
-  $('#setScan').addEventListener('click', async () => {
-    try { const r = await api('import/scan', { method: 'POST', body: {} }); toast(r.imported?.length ? `${r.imported.length} Modell(e) importiert` : 'Keine neuen Dateien gefunden'); if (r.imported?.length) { const data = await api('models'); state.models = data.models || []; openModelPicker(); } } catch (err) { toast(err.message, true); }
-  });
+  $('#setUpload').addEventListener('click', () => { closeModal(); openImportWizard(); });
   $('#setDelete').addEventListener('click', async () => {
     if (!confirm(`Modell „${state.model.name}“ wirklich löschen?`)) return;
     try { await api(`models/${state.model.id}`, { method: 'DELETE' }); state.models = state.models.filter(m => m.id !== state.model.id); closeModal(); if (state.models.length) await openModel(state.models[0]); else { state.model = null; state.scene = null; setEmpty(true); } toast('Modell gelöscht'); } catch (err) { toast(err.message, true); }
@@ -1538,6 +1532,98 @@ function uploadObjVisual(file) {
   };
   xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim OBJ-Upload', true); };
   xhr.send(fd);
+}
+
+
+let importWizard = null;
+
+function openImportWizard() {
+  importWizard = { obj: null, sh3d: null, mtl: null, textures: [] };
+  els.modal.className = 'modal import-modal';
+  els.modal.innerHTML = `
+    <div class="modal-head"><div><h2>Neues Modell importieren</h2><p>OBJ für die Darstellung · SH3D für Etagen, Räume und Geräte · MTL für Materialien</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="import-step" data-kind="obj">
+        <div class="import-step-head"><b>1. OBJ</b><span>Hausmodell</span></div>
+        <div class="import-drop">OBJ hierher ziehen oder <button class="btn btn-small" type="button">OBJ wählen</button><input type="file" accept=".obj" hidden><div class="import-file"></div></div>
+      </div>
+      <div class="import-step" data-kind="sh3d">
+        <div class="import-step-head"><b>2. SH3D</b><span>Etagen &amp; Räume</span></div>
+        <div class="import-drop">SH3D hierher ziehen oder <button class="btn btn-small" type="button">SH3D wählen</button><input type="file" accept=".sh3d" hidden><div class="import-file"></div></div>
+      </div>
+      <div class="import-step" data-kind="mtl">
+        <div class="import-step-head"><b>3. MTL + Texturen</b><span>Materialien</span></div>
+        <div class="import-drop">MTL und alle Texturen hierher ziehen oder <button class="btn btn-small" type="button">Dateien wählen</button><input type="file" accept=".mtl,.jpg,.jpeg,.png,.webp" multiple hidden><div class="import-file"></div></div>
+      </div>
+      <div class="insight"><svg><use href="#i-cloud"/></svg><div>Das OBJ braucht die MTL und die Texturen aus demselben Export. Ohne Texturen wird das Modell trotzdem geladen, aber ohne Bildmaterial.</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="importRun" disabled><svg><use href="#i-upload"/></svg> Verarbeiten</button></div>`;
+  openModal();
+  const setFile = (kind, files) => {
+    if (kind === 'mtl') {
+      const all = [...files];
+      const mtl = all.find(f => f.name.toLowerCase().endsWith('.mtl')) || null;
+      const textures = all.filter(f => f !== mtl);
+      importWizard.mtl = mtl;
+      importWizard.textures = textures;
+    } else {
+      importWizard[kind] = files[0] || null;
+    }
+    const step = $(`.import-step[data-kind="${kind}"]`);
+    const label = kind === 'mtl'
+      ? [importWizard.mtl?.name, importWizard.textures.length ? `${importWizard.textures.length} Texturen` : ''].filter(Boolean).join(' · ')
+      : importWizard[kind]?.name || '';
+    step.querySelector('.import-file').textContent = label;
+    step.classList.toggle('has-file', !!label);
+    $('#importRun').disabled = !(importWizard.obj && importWizard.sh3d);
+  };
+  $$('.import-step').forEach(step => {
+    const kind = step.dataset.kind;
+    const input = step.querySelector('input[type=file]');
+    const button = step.querySelector('button');
+    button?.addEventListener('click', e => { e.preventDefault(); input.click(); });
+    input.addEventListener('change', () => setFile(kind, input.files));
+    ['dragenter', 'dragover'].forEach(ev => step.addEventListener(ev, e => { e.preventDefault(); step.classList.add('is-drag'); }));
+    ['dragleave', 'drop'].forEach(ev => step.addEventListener(ev, e => {
+      if (ev === 'drop') { e.preventDefault(); setFile(kind, e.dataTransfer.files); }
+      step.classList.remove('is-drag');
+    }));
+  });
+  $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+  $('#importRun').addEventListener('click', () => {
+    if (!importWizard?.obj || !importWizard?.sh3d) return;
+    const fd = new FormData();
+    fd.append('obj', importWizard.obj, importWizard.obj.name);
+    fd.append('sh3d', importWizard.sh3d, importWizard.sh3d.name);
+    if (importWizard.mtl) fd.append('mtl', importWizard.mtl, importWizard.mtl.name);
+    for (const texture of importWizard.textures) fd.append('textures', texture, texture.name);
+    fd.append('name', importWizard.sh3d.name.replace(/\.sh3d$/i, '').replace(/[_-]+/g, ' '));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', new URL('import-package', API));
+    showLoader(true, 'Modell wird verarbeitet');
+    setLoaderProgress(.05, 'Dateien werden hochgeladen');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) setLoaderProgress(.05 + e.loaded / e.total * .5, `${(e.loaded / 1048576).toFixed(1)} / ${(e.total / 1048576).toFixed(1)} MB`); };
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          setLoaderProgress(.9, 'Etagen und Räume werden übernommen');
+          const data = JSON.parse(xhr.responseText);
+          const list = await api('models');
+          state.models = list.models || [];
+          await openModel(data.model);
+          closeModal();
+          toast('Modell importiert');
+        } catch (err) { hideLoader(); toast(err.message, true); }
+      } else {
+        hideLoader();
+        let msg = xhr.responseText || xhr.statusText;
+        try { msg = JSON.parse(xhr.responseText).detail || msg; } catch {}
+        toast('Import fehlgeschlagen: ' + msg, true);
+      }
+    };
+    xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim Import', true); };
+    xhr.send(fd);
+  });
 }
 
 function pickFile() { els.fileInput.click(); }

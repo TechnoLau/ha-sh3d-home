@@ -561,3 +561,15 @@ body.room-only .overlay .modal { margin: 0 auto; }
 .walk-crosshair::before { width: 22px; height: 1px; top: 10px; left: 0; }
 .walk-crosshair::after { width: 1px; height: 22px; left: 10px; top: 0; }
 .walk-crosshair i { position: absolute; left: 8px; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: #ffcf8a; box-shadow: 0 0 8px rgba(255,190,90,.95); }
+
+/* three-step model import */
+.import-modal { max-width: 620px; }
+.import-step { border: 1px solid var(--line); border-radius: 12px; padding: 13px; margin-bottom: 10px; background: rgba(255,252,246,.55); transition: border-color .15s, background .15s; }
+.import-step.has-file { border-color: rgba(121,151,92,.65); background: rgba(238,246,229,.65); }
+.import-step.is-drag { border-color: var(--accent); background: rgba(255,244,225,.9); }
+.import-step-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.import-step-head b { font-size: 13px; color: var(--ink); }
+.import-step-head span { font-size: 10px; color: var(--ink-3); }
+.import-drop { border: 1px dashed rgba(130,112,84,.35); border-radius: 9px; padding: 12px; text-align: center; color: var(--ink-2); font-size: 11px; }
+.import-drop .btn { margin-left: 6px; }
+.import-file { margin-top: 6px; min-height: 14px; font-size: 10px; font-weight: 650; color: var(--accent-deep); word-break: break-all; }
