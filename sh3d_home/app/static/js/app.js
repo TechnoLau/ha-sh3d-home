@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.5.1';
+import { Viewer } from './viewer.js?v=0.5.2';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.5.1';
+} from './rules.js?v=0.5.2';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1547,7 +1547,7 @@ function openImportWizard() {
         <div class="import-drop">OBJ hierher ziehen oder <button class="btn btn-small" type="button">OBJ wählen</button><input type="file" accept=".obj" hidden><div class="import-file"></div></div>
       </div>
       <div class="import-step" data-kind="sh3d">
-        <div class="import-step-head"><b>2. SH3D</b><span>Etagen &amp; Räume</span></div>
+        <div class="import-step-head"><b>2. SH3D</b><span>optional · Etagen &amp; Räume</span></div>
         <div class="import-drop">SH3D hierher ziehen oder <button class="btn btn-small" type="button">SH3D wählen</button><input type="file" accept=".sh3d" hidden><div class="import-file"></div></div>
       </div>
       <div class="import-step" data-kind="mtl">
@@ -1556,7 +1556,7 @@ function openImportWizard() {
       </div>
       <div class="insight"><svg><use href="#i-cloud"/></svg><div>Das OBJ braucht die MTL und die Texturen aus demselben Export. Ohne Texturen wird das Modell trotzdem geladen, aber ohne Bildmaterial.</div></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn" id="importObjOnly" disabled>Nur OBJ + MTL</button><button class="btn btn-primary" id="importRun" disabled><svg><use href="#i-upload"/></svg> Verarbeiten</button></div>`;
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="importRun" disabled><svg><use href="#i-upload"/></svg> Verarbeiten</button></div>`;
   openModal();
   const setFile = (kind, files) => {
     if (kind === 'mtl') {
@@ -1574,9 +1574,7 @@ function openImportWizard() {
       : importWizard[kind]?.name || '';
     step.querySelector('.import-file').textContent = label;
     step.classList.toggle('has-file', !!label);
-    $('#importRun').disabled = !(importWizard.obj && importWizard.sh3d);
-    const only = $('#importObjOnly');
-    if (only) only.disabled = !importWizard.obj;
+    $('#importRun').disabled = !importWizard.obj;
   };
   $$('.import-step').forEach(step => {
     const kind = step.dataset.kind;
@@ -1592,28 +1590,29 @@ function openImportWizard() {
   });
   $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
   $('#importRun').addEventListener('click', () => {
-    if (!importWizard?.obj || !importWizard?.sh3d) return;
+    if (!importWizard?.obj) return;
+    const withSh3d = !!importWizard.sh3d;
     const fd = new FormData();
     fd.append('obj', importWizard.obj, importWizard.obj.name);
-    fd.append('sh3d', importWizard.sh3d, importWizard.sh3d.name);
+    if (withSh3d) fd.append('sh3d', importWizard.sh3d, importWizard.sh3d.name);
     if (importWizard.mtl) fd.append('mtl', importWizard.mtl, importWizard.mtl.name);
     for (const texture of importWizard.textures) fd.append('textures', texture, texture.name);
-    fd.append('name', importWizard.sh3d.name.replace(/\.sh3d$/i, '').replace(/[_-]+/g, ' '));
+    fd.append('name', (withSh3d ? importWizard.sh3d.name : importWizard.obj.name).replace(/\.(sh3d|obj)$/i, '').replace(/[_-]+/g, ' '));
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', new URL('import-package', API));
+    xhr.open('POST', new URL(withSh3d ? 'import-package' : 'import-obj', API));
     showLoader(true, 'Modell wird verarbeitet');
     setLoaderProgress(.05, 'Dateien werden hochgeladen');
     xhr.upload.onprogress = e => { if (e.lengthComputable) setLoaderProgress(.05 + e.loaded / e.total * .5, `${(e.loaded / 1048576).toFixed(1)} / ${(e.total / 1048576).toFixed(1)} MB`); };
     xhr.onload = async () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          setLoaderProgress(.9, 'Etagen und Räume werden übernommen');
+          setLoaderProgress(.9, 'Modell wird aufgebaut');
           const data = JSON.parse(xhr.responseText);
-          const list = await api('models');
-          state.models = list.models || [];
+          const list = await api('models'); state.models = list.models || [];
           await openModel(data.model);
           closeModal();
-          toast('Modell importiert');
+          toast(withSh3d ? 'Modell importiert' : 'OBJ importiert — jetzt Etagen einteilen');
+          if (!withSh3d) setTimeout(() => openFloorEditor(), 400);
         } catch (err) { hideLoader(); toast(err.message, true); }
       } else {
         hideLoader();
@@ -1625,163 +1624,6 @@ function openImportWizard() {
     xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim Import', true); };
     xhr.send(fd);
   });
-  const objOnly = $('#importObjOnly');
-  objOnly.addEventListener('click', () => {
-    if (!importWizard?.obj) return;
-    const fd = new FormData();
-    fd.append('obj', importWizard.obj, importWizard.obj.name);
-    if (importWizard.mtl) fd.append('mtl', importWizard.mtl, importWizard.mtl.name);
-    for (const texture of importWizard.textures) fd.append('textures', texture, texture.name);
-    fd.append('name', importWizard.obj.name.replace(/\.obj$/i, '').replace(/[_-]+/g, ' '));
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', new URL('import-obj', API));
-    showLoader(true, 'OBJ wird importiert');
-    setLoaderProgress(.08, 'OBJ und Materialien werden verarbeitet');
-    xhr.upload.onprogress = e => { if (e.lengthComputable) setLoaderProgress(.08 + e.loaded / e.total * .5, `${(e.loaded / 1048576).toFixed(1)} / ${(e.total / 1048576).toFixed(1)} MB`); };
-    xhr.onload = async () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          const list = await api('models'); state.models = list.models || [];
-          await openModel(data.model); closeModal(); toast('OBJ importiert — jetzt Etagen einteilen'); setTimeout(() => openFloorEditor(), 400);
-        } catch (err) { hideLoader(); toast(err.message, true); }
-      } else { hideLoader(); toast('OBJ-Import fehlgeschlagen: ' + (xhr.responseText || xhr.statusText), true); }
-    };
-    xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim OBJ-Import', true); };
-    xhr.send(fd);
-  });
-}
-
-
-
-function openRoomConfigurator() {
-  if (!state.scene?.obj) { toast('Dieses Modell hat keine OBJ-Geometrie', true); return; }
-  const groups = state.scene.obj.groups || [];
-  const floors = groups.filter(g => g.kind === 'floor');
-  const walls = groups.filter(g => g.kind === 'wall');
-  if (!floors.length) { toast('Keine Bodenflächen im OBJ gefunden', true); return; }
-  const levels = state.scene.levels || [];
-  const levelName = id => levels.find(l => l.id === id)?.name || 'Etage';
-  const near = (wall, floor) => !(
-    wall.bbox.maxX < floor.bbox.minX - 30 || wall.bbox.minX > floor.bbox.maxX + 30 ||
-    wall.bbox.maxZ < floor.bbox.minZ - 30 || wall.bbox.minZ > floor.bbox.maxZ + 30
-  );
-  const rooms = [];
-  const newRoom = () => {
-    const floor = floors[0];
-    const room = { name: `Zimmer ${rooms.length + 1}`, level: floor.level, floor: floor.name, walls: new Set() };
-    for (const w of walls) if (w.level === room.level && near(w, floor)) room.walls.add(w.name);
-    rooms.push(room);
-  };
-  const render = () => {
-    els.modal.innerHTML = `
-      <div class="modal-head"><div><h2>Zimmer einrichten</h2><p>Boden auswählen, Wände markieren – Möbel werden automatisch zugeordnet.</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
-      <div class="modal-body">
-        <div class="btn-row" style="margin-bottom:10px"><button class="btn btn-small" id="addRoom"><svg><use href="#i-plus"/></svg> Zimmer hinzufügen</button></div>
-        <div id="roomDrafts">${rooms.map((room, i) => {
-          const rf = floors.filter(f => f.level === room.level);
-          const rw = walls.filter(w => w.level === room.level);
-          return `<div class="room-config" data-room="${i}">
-            <div class="room-config-head"><input class="input" data-name="${i}" value="${escapeHtml(room.name)}"><button class="icon-btn" data-remove-room="${i}"><svg><use href="#i-trash"/></svg></button></div>
-            <div class="field"><label>Etage</label><select class="input" data-level="${i}">${levels.map(l => `<option value="${l.id}" ${l.id === room.level ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}</select></div>
-            <div class="field"><label>Boden</label><select class="input" data-floor="${i}">${rf.map(f => `<option value="${f.name}" ${f.name === room.floor ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select></div>
-            <div class="room-wall-title"><span>Wände</span><button class="chip" data-all-walls="${i}">Alle</button></div>
-            <div class="room-wall-list">${rw.map(w => `<label class="room-wall"><input type="checkbox" data-wall="${i}:${w.name}" ${room.walls.has(w.name) ? 'checked' : ''}> <span>${escapeHtml(w.name)}</span></label>`).join('')}</div>
-          </div>`;
-        }).join('')}</div>
-      </div>
-      <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="saveRooms"><svg><use href="#i-check"/></svg> Zimmer speichern</button></div>`;
-    openModal();
-    $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
-    $('#addRoom').addEventListener('click', () => { newRoom(); render(); });
-    $$('[data-remove-room]').forEach(b => b.addEventListener('click', () => { rooms.splice(Number(b.dataset.removeRoom), 1); render(); }));
-    $$('[data-name]').forEach(el => el.addEventListener('input', () => { rooms[Number(el.dataset.name)].name = el.value; }));
-    $$('[data-level]').forEach(el => el.addEventListener('change', () => {
-      const room = rooms[Number(el.dataset.level)]; room.level = el.value;
-      const first = floors.find(f => f.level === room.level); room.floor = first?.name || '';
-      room.walls.clear(); if (first) for (const w of walls) if (w.level === room.level && near(w, first)) room.walls.add(w.name);
-      render();
-    }));
-    $$('[data-floor]').forEach(el => el.addEventListener('change', () => {
-      const room = rooms[Number(el.dataset.floor)]; room.floor = el.value;
-      const floor = floors.find(f => f.name === room.floor);
-      room.walls.clear(); if (floor) for (const w of walls) if (w.level === room.level && near(w, floor)) room.walls.add(w.name);
-      render();
-    }));
-    $$('[data-wall]').forEach(el => el.addEventListener('change', () => {
-      const [i, name] = el.dataset.wall.split(':'); const room = rooms[Number(i)];
-      if (el.checked) room.walls.add(name); else room.walls.delete(name);
-    }));
-    $$('[data-all-walls]').forEach(btn => btn.addEventListener('click', () => {
-      const room = rooms[Number(btn.dataset.allWalls)];
-      const rw = walls.filter(w => w.level === room.level);
-      if (room.walls.size === rw.length) room.walls.clear(); else for (const w of rw) room.walls.add(w.name);
-      render();
-    }));
-    $('#saveRooms').addEventListener('click', async () => {
-      const payload = rooms.map(r => ({ name: r.name, level: r.level, groups: [r.floor, ...r.walls] })).filter(r => r.groups[0]);
-      try {
-        await api(`models/${state.model.id}/rooms`, { method: 'PUT', body: { rooms: payload } });
-        closeModal(); const list = await api('models'); state.models = list.models || [];
-        await openModel(state.models.find(m => m.id === state.model.id) || state.model);
-        toast(`${payload.length} Zimmer gespeichert`);
-      } catch (err) { toast('Zimmer speichern fehlgeschlagen: ' + err.message, true); }
-    });
-  };
-  render();
-}
-
-function openFloorEditor() {
-  if (!state.scene?.obj) { toast('Dieses Modell hat keine OBJ-Geometrie', true); return; }
-  const b = state.scene.obj.bounds;
-  const low = Number(b.minY), high = Number(b.maxY);
-  const cuts = Array.isArray(state.scene.obj.cuts) ? [...state.scene.obj.cuts] : [];
-  els.modal.className = 'modal';
-  els.modal.innerHTML = `
-    <div class="modal-head"><div><h2>Etagen einteilen</h2><p>Horizontalen Trenner verschieben und für jede Etage eine Trennfläche setzen.</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
-    <div class="modal-body">
-      <div class="field"><label>Trennfläche</label>
-        <input type="range" id="cutRange" min="${Math.floor(low)}" max="${Math.ceil(high)}" step="1" value="${Math.round((low + high) / 2)}">
-        <div class="slider-row"><span></span><output id="cutValue">${Math.round((low + high) / 2)} cm</output></div>
-      </div>
-      <div class="btn-row"><button class="btn btn-small" id="addCut"><svg><use href="#i-plus"/></svg> Trenner setzen</button><button class="btn btn-small btn-ghost" id="clearCuts">Alle Trenner löschen</button></div>
-      <div id="cutList" class="chip-row" style="margin-top:10px"></div>
-      <div class="insight"><svg><use href="#i-layers"/></svg><div>Von unten nach oben: Jeder gesetzte Trenner beendet die aktuelle Etage. Beim Übernehmen werden die Etagen-Buttons neu erzeugt.</div></div>
-    </div>
-    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="saveCuts"><svg><use href="#i-check"/></svg> Etagen übernehmen</button></div>`;
-  openModal();
-  const range = $('#cutRange');
-  const renderCuts = () => {
-    cuts.sort((a, b) => a - b);
-    $('#cutList').innerHTML = cuts.map((c, i) => `<button class="chip is-active" data-cut="${i}">${Math.round(c)} cm ×</button>`).join('');
-    $$('#cutList [data-cut]').forEach(btn => btn.addEventListener('click', () => { cuts.splice(Number(btn.dataset.cut), 1); renderCuts(); }));
-  };
-  const preview = () => {
-    const y = Number(range.value);
-    $('#cutValue').textContent = `${y} cm`;
-    viewer?.setCutPlane(y, true);
-  };
-  range.addEventListener('input', preview);
-  $('#addCut').addEventListener('click', () => {
-    const y = Number(range.value);
-    if (y > low + 10 && y < high - 10) cuts.push(y);
-    cuts.sort((a, b) => a - b);
-    renderCuts();
-  });
-  $('#clearCuts').addEventListener('click', () => { cuts.length = 0; renderCuts(); });
-  $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
-  $('#saveCuts').addEventListener('click', async () => {
-    try {
-      const data = await api(`models/${state.model.id}/floors`, { method: 'PUT', body: { cuts } });
-      viewer?.setCutPlane(0, false);
-      closeModal();
-      const list = await api('models'); state.models = list.models || [];
-      await openModel(state.models.find(m => m.id === state.model.id) || state.model);
-      toast(`${data.levels.length} Etagen gespeichert`); setTimeout(() => openRoomConfigurator(), 500);
-    } catch (err) { toast('Etagen speichern fehlgeschlagen: ' + err.message, true); }
-  });
-  renderCuts();
-  preview();
 }
 
 function pickFile() { els.fileInput.click(); }

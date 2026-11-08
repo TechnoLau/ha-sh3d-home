@@ -1,5 +1,5 @@
 name: SH3D Home
-version: "0.5.1"
+version: "0.5.2"
 slug: sh3d_home
 description: "Sweet-Home-3D-Modelle als lebendiges 3D-Dashboard: Lichter, Türen, Fenster, Heizungen, Lautsprecher und Bildschirme mit Home Assistant verbinden."
 url: https://github.com/TechnoLau/ha-sh3d-home
