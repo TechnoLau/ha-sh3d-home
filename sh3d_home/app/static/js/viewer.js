@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.5';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.6';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -447,10 +447,21 @@ export class Viewer {
     wrapper.add(glow);
     wrapper.userData.glow = glow;
     if (kind === 'light') {
-      const pl = new THREE.PointLight('#ffd39a', 0, 8, 1.7);
+      const pl = new THREE.SpotLight('#ffd39a', 0, 9, 1.15, 0.72, 1.45);
       pl.position.y = obj.height * S * 0.52;
+      pl.castShadow = false;
+      pl.shadow.mapSize.set(1024, 1024);
+      pl.shadow.camera.near = 0.04;
+      pl.shadow.camera.far = 9;
+      pl.shadow.bias = -0.0006;
+      pl.shadow.normalBias = 0.025;
+      const target = new THREE.Object3D();
+      target.position.set(0, 0, 0);
+      wrapper.add(target);
+      pl.target = target;
       wrapper.add(pl);
       wrapper.userData.point = pl;
+      wrapper.userData.target = target;
       const ledMat = new THREE.MeshBasicMaterial({ color: '#fff3cf' });
       const led = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10), ledMat);
       led.visible = false;
@@ -789,10 +800,12 @@ export class Viewer {
     const y = Number.isFinite(Number(raw.y)) ? Number(raw.y) : defaultY;
     const z = Number.isFinite(Number(raw.z)) ? Number(raw.z) : 0;
     const point = wrapper.userData.point;
+    const target = wrapper.userData.target;
     const glow = wrapper.userData.glow;
     const pool = wrapper.userData.pool;
     const led = wrapper.userData.led;
     for (const item of [point, glow, led]) if (item) item.position.set(x, y, z);
+    if (target) target.position.set(x, -obj.elevation * S + 0.02, z);
     if (pool) pool.position.set(x, -obj.elevation * S + 0.02, z);
     if (led) led.visible = this.selectedId === obj.id && !!mapping;
   }
@@ -811,14 +824,17 @@ export class Viewer {
     const c = cssColor(vs.color || obj.color || (obj.kind === 'display' ? '#9bd6ff' : '#ffd39a'));
     if (glow) {
       glow.material.color.set(c);
-      glow.material.opacity = active ? Math.min(0.95, 0.52 + 0.4 * (vs.brightness / 255)) * (vs.glow ?? 1) : (obj.kind === 'light' && !mapped ? 0.06 : 0);
+      glow.material.opacity = obj.kind === 'light' && active
+        ? Math.min(0.95, 0.52 + 0.4 * (vs.brightness / 255)) * (vs.glow ?? 1)
+        : 0;
       const s = Math.max(.34, Math.min(2.2, obj.width * S * (obj.kind === 'light' ? 1.45 : .8)));
       glow.scale.set(s, s, 1);
     }
     if (point) {
       point.color.set(c);
-      point.intensity = active ? 2.2 + 3.4 * ((vs.brightness || 0) / 255) : 0;
+      point.intensity = active ? 2.8 + 5.2 * ((vs.brightness || 0) / 255) : 0;
       point.distance = Math.max(4.2, obj.height * S * 3.6);
+      point.castShadow = !!active;
     }
     if (pool) {
       pool.material.color.set(c);
@@ -845,10 +861,11 @@ export class Viewer {
     if (screen) {
       const on = active && (vs.screen || (vs.on && (obj.kind === 'display' || obj.kind === 'computer')));
       screen.material.color.set(vs.color || '#93ccff');
-      screen.material.opacity = on ? 0.7 : 0;
+      screen.material.opacity = on ? 0.96 : 0;
+      screen.material.toneMapped = false;
       screen.userData.active = on;
-      if (screenLight) { screenLight.color.set(vs.color || '#93ccff'); screenLight.intensity = on ? 1.4 : 0; }
-      if (screenGlow) { screenGlow.material.color.set(vs.color || '#93ccff'); screenGlow.material.opacity = on ? 0.32 : 0; screenGlow.userData.active = on; }
+      if (screenLight) { screenLight.color.set(vs.color || '#93ccff'); screenLight.intensity = on ? 3.2 : 0; }
+      if (screenGlow) { screenGlow.material.color.set(vs.color || '#93ccff'); screenGlow.material.opacity = on ? 0.58 : 0; screenGlow.userData.active = on; }
     }
     if (pulse) {
       pulse.material.opacity = active ? 0.35 : 0;
@@ -1056,8 +1073,8 @@ export class Viewer {
 
   setRoomOnly(on) {
     this.roomOnly = !!on;
-    if (this.renderer) this.renderer.shadowMap.enabled = !on;
-    if (this.sun) this.sun.castShadow = !on;
+    if (this.renderer) this.renderer.shadowMap.enabled = true;
+    if (this.sun) this.sun.castShadow = true;
   }
 
   toggleLocal(id) {
