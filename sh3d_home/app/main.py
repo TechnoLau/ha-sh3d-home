@@ -236,7 +236,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.4.5"),
+        "version": os.environ.get("SH3D_VERSION", "0.4.6"),
     })
 
 
@@ -482,7 +482,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.5"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.6"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -552,7 +552,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.5",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.6",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -562,7 +562,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.5"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.6"
     for attempt in range(30):
         if BRIDGE.connected:
             try:

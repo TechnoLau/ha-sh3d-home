@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.5';
+import { Viewer } from './viewer.js?v=0.4.6';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.5';
+} from './rules.js?v=0.4.6';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -362,8 +362,8 @@ function bindShell() {
     if (ev === 'drop' && e.dataTransfer?.files?.length) {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
-      if (file?.name.toLowerCase().endsWith('.sh3d')) uploadModel(file);
-      else toast('Bitte eine .sh3d-Datei ablegen', true);
+      if (file?.name.toLowerCase().match(/\.(sh3d|zip)$/)) uploadModel(file);
+      else toast('Bitte eine .sh3d- oder .zip-Datei ablegen', true);
     }
     els.stage.classList.remove('is-drop');
   }));
@@ -1543,10 +1543,11 @@ function uploadObjVisual(file) {
 function pickFile() { els.fileInput.click(); }
 
 function uploadModel(file) {
-  if (!file.name.toLowerCase().endsWith('.sh3d')) { toast('Bitte eine .sh3d-Datei auswählen', true); return; }
+  const lower = file.name.toLowerCase();
+  if (!lower.endsWith('.sh3d') && !lower.endsWith('.zip')) { toast('Bitte eine .sh3d- oder .zip-Datei auswählen', true); return; }
   const fd = new FormData();
   fd.append('file', file, file.name);
-  fd.append('name', file.name.replace(/\.sh3d$/i, '').replace(/[_-]+/g, ' '));
+  fd.append('name', file.name.replace(/\.(sh3d|zip)$/i, '').replace(/[_-]+/g, ' '));
   const xhr = new XMLHttpRequest();
   xhr.open('POST', new URL('models', API));
   showLoader(true, `${file.name} wird importiert`);
