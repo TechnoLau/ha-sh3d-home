@@ -236,7 +236,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.4.4"),
+        "version": os.environ.get("SH3D_VERSION", "0.4.5"),
     })
 
 
@@ -390,9 +390,9 @@ async def api_upload(request: web.Request) -> web.Response:
                 display_name = (await field.text()).strip() or None
             elif field.name == "file":
                 filename = Path(field.filename or "model.sh3d").name
-                if not filename.lower().endswith(".sh3d"):
-                    raise web.HTTPBadRequest(text="Bitte eine .sh3d-Datei auswählen")
-                temp_path = temp_dir / "upload.sh3d"
+                if not filename.lower().endswith((".sh3d", ".zip")):
+                    raise web.HTTPBadRequest(text="Bitte eine .sh3d- oder .zip-Datei auswählen")
+                temp_path = temp_dir / ("upload.zip" if filename.lower().endswith(".zip") else "upload.sh3d")
                 size = 0
                 with temp_path.open("wb") as out:
                     while True:
@@ -407,8 +407,32 @@ async def api_upload(request: web.Request) -> web.Response:
                 await field.release()
         if not temp_path or not temp_path.exists():
             raise web.HTTPBadRequest(text="Keine Datei empfangen")
+        sh3d_path = temp_path
+        package_zip = None
+        if temp_path.suffix.lower() == ".zip":
+            package_zip = temp_path
+            extract_dir = temp_dir / "package"
+            await asyncio.to_thread(obj_import.extract_zip, temp_path, extract_dir)
+            sh3d_files = list(extract_dir.rglob("*.sh3d"))
+            if not sh3d_files:
+                raise web.HTTPBadRequest(text="Im ZIP fehlt eine .sh3d-Datei für Räume und Etagen")
+            sh3d_path = sh3d_files[0]
+            if display_name is None:
+                display_name = sh3d_path.stem
         try:
-            meta = await asyncio.to_thread(STORE.add_model, temp_path, display_name)
+            meta = await asyncio.to_thread(STORE.add_model, sh3d_path, display_name)
+            if package_zip is not None:
+                folder = MODELS_DIR / meta["id"]
+                scene_file = folder / "scene.json"
+                scene = json.loads(scene_file.read_text())
+                obj = await asyncio.to_thread(obj_import.import_obj_zip, package_zip, folder, scene, meta["name"])
+                obj["importedAt"] = now_iso()
+                scene["obj"] = obj
+                scene_file.write_text(json.dumps(scene, ensure_ascii=False))
+                STORE.scene_cache[meta["id"]] = scene
+                meta["obj"] = {"objFile": obj["objFile"], "mtlFile": obj["mtlFile"], "groups": len(obj["groups"]), "objects": len(obj["objects"]), "importedAt": obj["importedAt"]}
+                STORE.write_meta(meta["id"], meta)
+                STORE.models[meta["id"]] = meta
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc))
         return json_response({"ok": True, "model": meta})
@@ -458,7 +482,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.4"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.5"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -528,7 +552,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.4",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.5",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -538,7 +562,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.4"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.5"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
