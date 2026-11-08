@@ -235,7 +235,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.2.4"),
+        "version": os.environ.get("SH3D_VERSION", "0.2.5"),
     })
 
 
@@ -400,7 +400,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.4"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.5"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -470,7 +470,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.4",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.5",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -480,7 +480,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.2.4"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.2.5"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
@@ -527,7 +527,10 @@ async def on_cleanup(app: web.Application) -> None:
         task = app.get(key)
         if task:
             task.cancel()
-    await BRIDGE.stop()
+    try:
+        await asyncio.wait_for(BRIDGE.stop(), timeout=5)
+    except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+        pass
 
 
 @web.middleware
@@ -568,4 +571,4 @@ def create_app() -> web.Application:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     app = create_app()
-    web.run_app(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8099")), access_log=None)
+    web.run_app(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8099")), access_log=None, shutdown_timeout=5)
