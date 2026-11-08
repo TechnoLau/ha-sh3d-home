@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.5.0';
+import { Viewer } from './viewer.js?v=0.5.1';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.5.0';
+} from './rules.js?v=0.5.1';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1498,15 +1498,12 @@ function openModelPicker() {
     <div class="modal-head"><div><h2>Modell wählen</h2><p>Sweet-Home-3D-Dateien bleiben lokal auf deinem Server.</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
     <div class="modal-body">
       ${models.length ? `<div class="model-list">${models.map(m => `<button class="model-item ${m.id === state.model?.id ? 'is-active' : ''}" data-model="${m.id}"><span class="model-thumb">${m.thumbnail ? `<img src="${escapeHtml(m.thumbnail)}" alt="">` : `<svg><use href="#i-cube"/></svg>`}</span><span class="model-copy"><b>${escapeHtml(m.name)}</b><small>${m.stats?.levels || 0} Etagen · ${m.stats?.lights || 0} Lichter · ${(m.size / 1048576).toFixed(1)} MB</small></span><svg class="chev"><use href="#i-chevron"/></svg></button>`).join('')}</div>` : `<div class="rule-empty">Noch kein Modell importiert.</div>`}
-      <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" id="pickUpload"><svg><use href="#i-upload"/></svg> .sh3d hochladen</button><button class="btn btn-ghost" id="pickScan">Ordner scannen</button></div>
+      <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" id="pickUpload"><svg><use href="#i-upload"/></svg> Importieren</button></div>
     </div>`;
   openModal();
   $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
   $$('[data-model]').forEach(b => b.addEventListener('click', async () => { closeModal(); const m = models.find(x => x.id === b.dataset.model); if (m) await openModel(m); }));
-  $('#pickUpload').addEventListener('click', () => { closeModal(); pickFile(); });
-  $('#pickScan').addEventListener('click', async () => {
-    try { const r = await api('import/scan', { method: 'POST', body: {} }); const data = await api('models'); state.models = data.models || []; closeModal(); if (r.imported?.length) await openModel(r.imported[0]); else toast('Keine neuen Dateien'); } catch (err) { toast(err.message, true); }
-  });
+  $('#pickUpload').addEventListener('click', () => { closeModal(); openImportWizard(); });
 }
 
 function uploadObjVisual(file) {
