@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.6';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.7';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -487,6 +487,10 @@ export class Viewer {
       wrapper.add(screen);
       wrapper.userData.screen = screen;
       const screenLight = new THREE.PointLight('#8fc7ff', 0, 4.5, 2);
+      screenLight.castShadow = true;
+      screenLight.shadow.mapSize.set(512, 512);
+      screenLight.shadow.bias = -0.0008;
+      screenLight.shadow.normalBias = 0.02;
       screenLight.position.set(0, obj.height * S * .56, obj.depth * S * .62);
       wrapper.add(screenLight);
       wrapper.userData.screenLight = screenLight;
@@ -864,7 +868,7 @@ export class Viewer {
       screen.material.opacity = on ? 0.96 : 0;
       screen.material.toneMapped = false;
       screen.userData.active = on;
-      if (screenLight) { screenLight.color.set(vs.color || '#93ccff'); screenLight.intensity = on ? 3.2 : 0; }
+      if (screenLight) { screenLight.color.set(vs.color || '#93ccff'); screenLight.castShadow = on; screenLight.intensity = on ? 3.2 : 0; }
       if (screenGlow) { screenGlow.material.color.set(vs.color || '#93ccff'); screenGlow.material.opacity = on ? 0.58 : 0; screenGlow.userData.active = on; }
     }
     if (pulse) {

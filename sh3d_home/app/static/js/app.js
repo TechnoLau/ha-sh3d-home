@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.2.6';
+import { Viewer } from './viewer.js?v=0.2.7';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.2.6';
+} from './rules.js?v=0.2.7';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
