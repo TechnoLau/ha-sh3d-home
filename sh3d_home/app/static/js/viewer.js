@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.4';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.5';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -287,6 +287,7 @@ export class Viewer {
     this.objGroups = new Map();
     this.objVisual = false;
     this.objRoot = null;
+    this.objRoomLevels = new Set();
     for (const btn of this.floatButtons.values()) btn.el.remove();
     this.floatButtons.clear();
     this.outline?.parent && this.outline.parent.remove(this.outline);
@@ -884,15 +885,18 @@ export class Viewer {
       this.objRoot = root;
       this.root.add(root);
       this.objVisual = true;
-      // Hide the procedurally rendered SH3D visual, but keep its invisible
-      // hit boxes, room pickers and status effects.
-      for (const wrapper of this.objectGroups.values()) {
-        if (wrapper.userData.model) wrapper.userData.model.visible = false;
+      this.objRoomLevels = new Set((info.groups || []).filter(g => g.kind === 'floor' || g.kind === 'ceiling').map(g => g.level));
+      if (!this.objRoomLevels.size) this.objRoomLevels = new Set(this.levels.keys());
+      // Hide the procedurally rendered SH3D visual only on levels covered by
+      // the OBJ; other floors keep the normal renderer.
+      for (const obj of this.sceneData.objects) {
+        const wrapper = this.objectGroups.get(obj.id);
+        if (wrapper?.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level);
       }
-      for (const w of this.wallGroups) w.mesh.visible = false;
-      for (const { mesh, ceiling } of this.roomMeshes) {
+      for (const w of this.wallGroups) w.mesh.visible = !this.objRoomLevels.has(w.level);
+      for (const { mesh, level, ceiling } of this.roomMeshes) {
         if (ceiling) { mesh.visible = false; }
-        else {
+        else if (this.objRoomLevels.has(level)) {
           mesh.visible = true;
           mesh.material.transparent = true;
           mesh.material.opacity = 0;
@@ -1174,12 +1178,19 @@ export class Viewer {
     for (const [id, group] of this.levelGroups) group.visible = activeLevels.has(id);
     const roomScope = this.scope.mode === 'room' || (this.scope.focus !== 'none' && this.scope.room);
     const targetRoom = this.scope.room;
-    for (const { mesh, room, level, ceiling } of this.roomMeshes) {
+    for (const { mesh, level, ceiling } of this.roomMeshes) {
       if (ceiling) { mesh.visible = false; continue; }
+      if (!this.objRoomLevels.has(level)) { mesh.visible = this.showFloors && activeLevels.has(level); continue; }
       mesh.visible = activeLevels.has(level);
       mesh.material.transparent = true;
       mesh.material.opacity = 0;
       mesh.material.depthWrite = false;
+    }
+    for (const w of this.wallGroups) {
+      if (!this.objRoomLevels.has(w.level)) {
+        w.mesh.visible = this.wallMode !== 'hidden' && activeLevels.has(w.level);
+        if (w.mesh.visible) this._setWallVisual(w.mesh, this.wallMode === 'transparent' ? .24 : 1);
+      }
     }
     for (const obj of this.sceneData.objects) {
       const wrapper = this.objectGroups.get(obj.id);
@@ -1189,7 +1200,7 @@ export class Viewer {
         if (this.scope.focus === 'isolate') visible = false;
       }
       wrapper.visible = visible;
-      if (wrapper.userData.model) wrapper.userData.model.visible = false;
+      if (wrapper.userData.model) wrapper.userData.model.visible = !this.objRoomLevels.has(obj.level);
       const btn = this.floatButtons.get(obj.id);
       if (btn && !visible) btn.el.classList.add('is-hidden');
     }
@@ -1197,7 +1208,7 @@ export class Viewer {
       object.visible = activeLevels.has(room.level) && (!roomScope || !targetRoom || room.id === targetRoom);
     }
     for (const { meta, meshes } of this.objGroups.values()) {
-      let visible = activeLevels.has(meta.level);
+      let visible = activeLevels.has(meta.level) && this.objRoomLevels.has(meta.level);
       if (roomScope && targetRoom && meta.room !== targetRoom) {
         if (this.scope.focus === 'isolate') visible = false;
         else if (this.scope.focus === 'dim') {
