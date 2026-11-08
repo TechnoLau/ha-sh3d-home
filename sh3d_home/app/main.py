@@ -199,7 +199,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.1.1"),
+        "version": os.environ.get("SH3D_VERSION", "0.1.2"),
     })
 
 
