@@ -191,7 +191,7 @@ def validate_model_id(model_id: str) -> str:
 # ---------------------------------------------------------------------------
 # HTTP handlers
 async def index(request: web.Request) -> web.FileResponse:
-    return web.FileResponse(STATIC_DIR / "index.html")
+    return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 async def health(request: web.Request) -> web.Response:
@@ -199,7 +199,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.1.2"),
+        "version": os.environ.get("SH3D_VERSION", "0.1.3"),
     })
 
 
@@ -489,8 +489,16 @@ async def on_cleanup(app: web.Application) -> None:
     await BRIDGE.stop()
 
 
+@web.middleware
+async def no_cache_static(request: web.Request, handler):
+    response = await handler(request)
+    if request.path.startswith("/static/") or request.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 def create_app() -> web.Application:
-    app = web.Application(client_max_size=MAX_UPLOAD + 1_000_000)
+    app = web.Application(client_max_size=MAX_UPLOAD + 1_000_000, middlewares=[no_cache_static])
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     app.router.add_get("/", index)
