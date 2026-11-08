@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3eee4">
+  <title>SH3D Home</title>
+  <link rel="stylesheet" href="static/styles.css">
+  <script>
+    window.__errs = [];
+    window.addEventListener('error', e => window.__errs.push(String(e.message || e.error || e)));
+    window.addEventListener('unhandledrejection', e => window.__errs.push('promise: ' + String(e.reason?.stack || e.reason)));
+  </script>
+  <script type="importmap">
+    {"imports": {"three": "./static/vendor/three.module.js", "three/addons/": "./static/vendor/"}}
+  </script>
+</head>
+<body>
+<svg class="svg-defs" aria-hidden="true">
+  <symbol id="i-light" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M8.2 14.6A6.5 6.5 0 1 1 15.8 14.6c-.8.6-1.2 1.2-1.3 2.4h-5c-.1-1.2-.5-1.8-1.3-2.4Z"/></symbol>
+  <symbol id="i-door" viewBox="0 0 24 24"><path d="M5 21V4.5c0-.8.6-1.5 1.4-1.5H17v18M5 21h14M14.5 12h.01"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/></symbol>
+  <symbol id="i-heat" viewBox="0 0 24 24"><path d="M7 20h10M8 20V9a4 4 0 0 1 8 0v11M9.5 5.5c-.7-1 .2-1.7 0-2.8M13 5.5c-.7-1 .2-1.7 0-2.8M10.5 13h3M12 11.5v3"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><circle cx="12" cy="14.5" r="3.5"/><circle cx="12" cy="7.5" r="1.2"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></symbol>
+  <symbol id="i-pc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 10h3M14 16h2"/><circle cx="9" cy="17" r="1"/></symbol>
+  <symbol id="i-sofa" viewBox="0 0 24 24"><path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3M4 11a2 2 0 0 1 2 2v2h12v-2a2 2 0 0 1 4 0v4H2v-4a2 2 0 0 1 2-2ZM5 19v2M19 19v2"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></symbol>
+  <symbol id="i-front" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h2v2H8zM14 9h2v2h-2zM8 14h8"/></symbol>
+  <symbol id="i-top" viewBox="0 0 24 24"><path d="M3 6h18v12H3zM3 10h18M9 6v12M15 6v12"/></symbol>
+  <symbol id="i-walk" viewBox="0 0 24 24"><circle cx="13" cy="4.5" r="2"/><path d="m10 21 2-5-2-3 1-4 4 3 3 1M8 10l2-2M12 16l3 5M10 13l-3 2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0 4 4m-4-4L8 8M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></symbol>
+  <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.6 1.5-1.3 0-.4-.2-.8-.4-1.1-.2-.3-.4-.6-.4-1 0-.8.7-1.4 1.5-1.4H16a5 5 0 0 0 5-5C21 6.6 17 3 12 3Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 9-12h-7l1-8Z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13 7l4 4"/></symbol>
+  <symbol id="i-full" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8 6 6 0 0 0-11.5 1.5A3.5 3.5 0 0 0 7 18Z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+</svg>
+
+<div class="shell" id="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40"><path d="M6 8h28v24H6z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 17h13v15M19 8v9h15M19 26h15M26 8v9" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="15.5" cy="21.5" r="1.5" fill="currentColor"/></svg>
+      </div>
+      <div class="brand-copy">
+        <strong>SH3D<span>Home</span></strong>
+        <small>Sweet Home · Live</small>
+      </div>
+      <button class="icon-btn sidebar-close" id="btnSidebarClose" aria-label="Seitenleiste schließen"><svg><use href="#i-close"/></svg></button>
+    </div>
+
+    <div class="sidebar-scroll">
+      <section class="project-card" id="projectCard">
+        <div class="project-kicker">Aktives Modell</div>
+        <div class="project-title" id="modelName">Kein Modell</div>
+        <div class="project-meta" id="modelMeta">Lade eine .sh3d-Datei hoch</div>
+        <div class="project-actions">
+          <button class="btn btn-small btn-ghost" id="btnChangeModel"><svg><use href="#i-layers"/></svg> Wechseln</button>
+          <button class="btn btn-small btn-ghost" id="btnUpload"><svg><use href="#i-upload"/></svg> Neu</button>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="block-head"><span>Etage</span><button class="text-btn" id="btnAllLevels">Alle</button></div>
+        <div class="floor-list" id="floorList"></div>
+      </section>
+
+      <section class="block grow">
+        <div class="block-head"><span>Objekte</span><span class="counter" id="objectCount">0</span></div>
+        <div class="search-wrap">
+          <svg><use href="#i-search"/></svg>
+          <input id="search" type="search" placeholder="Lampe, Tür, Raum …" autocomplete="off">
+        </div>
+        <div class="filter-row" id="filterRow">
+          <button class="filter is-active" data-filter="all">Alle</button>
+          <button class="filter" data-filter="light">Licht</button>
+          <button class="filter" data-filter="opening">Türen</button>
+          <button class="filter" data-filter="heating">Heizung</button>
+          <button class="filter" data-filter="audio">Audio</button>
+          <button class="filter" data-filter="screen">Screens</button>
+          <button class="filter" data-filter="furniture">Möbel</button>
+        </div>
+        <div class="object-list" id="objectList"></div>
+      </section>
+    </div>
+
+    <footer class="sidebar-footer">
+      <button class="footer-btn" id="btnDashboard"><svg><use href="#i-dashboard"/></svg><span>Dashboard-Karte</span></button>
+      <button class="footer-btn" id="btnSettings"><svg><use href="#i-settings"/></svg><span>Szene</span></button>
+      <div class="ha-status" id="haStatus"><i></i><span>Verbinde …</span></div>
+    </footer>
+  </aside>
+
+  <main class="stage" id="stage">
+    <canvas id="viewport"></canvas>
+    <div id="labels" class="labels"></div>
+    <div id="floating" class="floating"></div>
+
+    <div class="stage-top">
+      <button class="icon-btn mobile-menu" id="btnSidebarOpen" aria-label="Objekte öffnen"><svg><use href="#i-layers"/></svg></button>
+      <div class="stage-title">
+        <span class="stage-kicker" id="stageKicker">Übersicht</span>
+        <strong id="stageTitle">Haus Behms</strong>
+      </div>
+      <div class="view-tabs" role="group" aria-label="Ansicht">
+        <button data-view="iso" class="is-active" title="Perspektive"><svg><use href="#i-cube"/></svg><span>3D</span></button>
+        <button data-view="front" title="Vorne"><svg><use href="#i-front"/></svg><span>Vorne</span></button>
+        <button data-view="top" title="Oben"><svg><use href="#i-top"/></svg><span>Oben</span></button>
+        <button data-view="walk" title="Im Haus gehen"><svg><use href="#i-walk"/></svg><span>Gehen</span></button>
+      </div>
+      <div class="stage-actions">
+        <button class="icon-btn" id="btnRotate" title="Sanft drehen"><svg><use href="#i-bolt"/></svg></button>
+        <button class="icon-btn" id="btnFullscreen" title="Vollbild"><svg><use href="#i-full"/></svg></button>
+        <button class="icon-btn edit-toggle is-live" id="btnEditMode" title="Bearbeiten / Live"><svg><use href="#i-edit"/></svg><span>Live</span></button>
+      </div>
+    </div>
+
+    <div class="floor-float" id="floorFloat"></div>
+
+    <div class="loader" id="loader">
+      <div class="loader-mark"><svg><use href="#i-cube"/></svg></div>
+      <div class="loader-title">Modell wird aufgebaut</div>
+      <div class="loader-sub" id="loaderSub">Wände, Räume und Möbel …</div>
+      <div class="loader-bar"><i id="loaderBar"></i></div>
+    </div>
+
+    <div class="empty" id="empty">
+      <div class="empty-card">
+        <div class="empty-plan" aria-hidden="true">
+          <svg viewBox="0 0 220 140"><path d="M16 14h188v112H16zM16 64h76v62M92 14v50h112M92 94h112M150 14v50" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="56" cy="91" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M56 84v14M49 91h14" stroke="currentColor" stroke-width="1.5"/></svg>
+        </div>
+        <h2>Dein Haus, in Echtzeit.</h2>
+        <p>Lade eine Sweet-Home-3D-Datei hoch. SH3D Home liest Etagen, Räume, Lichter, Türen, Fenster und Geräte direkt aus dem Modell.</p>
+        <button class="btn btn-primary" id="btnEmptyUpload"><svg><use href="#i-upload"/></svg> .sh3d auswählen</button>
+        <small>Die Datei bleibt auf deinem Home-Assistant-Server.</small>
+      </div>
+    </div>
+
+    <div class="walk-hint" id="walkHint">
+      <div><b>WASD</b> gehen · Maus umsehen · <b>Esc</b> beenden</div>
+      <button class="btn btn-small" id="btnExitWalk">Ansicht verlassen</button>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="stage-status" id="stageStatus">
+      <span class="status-dot"></span>
+      <span id="statusText">Bereit</span>
+      <span class="status-sep"></span>
+      <span id="statusDetail">–</span>
+    </div>
+  </main>
+
+  <aside class="inspector" id="inspector" aria-live="polite"></aside>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+</div>
+
+<input type="file" id="fileInput" accept=".sh3d,application/zip" hidden>
+<script type="module" src="static/js/app.js"></script>
+</body>
+</html>
