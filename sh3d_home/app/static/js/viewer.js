@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.7';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.1';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -539,7 +539,7 @@ export class Viewer {
       this._modelProgress();
       return;
     }
-    const key = obj.modelKind + ':' + obj.model;
+    const key = obj.modelKind + ':' + obj.model + ':' + (obj.modelRotation || '') + ':' + (obj.mirrored ? 'm' : '');
     try {
       const proto = await this._loadPrototype(obj, key);
       if (this.disposed || !wrapper.parent) return;
@@ -558,6 +558,7 @@ export class Viewer {
       wrapper.userData.model = clone;
     } catch (err) {
       console.warn('Model load failed', obj.name, err);
+      (window.__modelErrors ||= []).push('MODEL ' + obj.name + ' ' + obj.model + ': ' + err);
       this._placeholder(wrapper, obj, 'error');
     } finally {
       this._modelProgress();
@@ -650,7 +651,8 @@ export class Viewer {
       const base = this.modelBase;
       const path = obj.model.split('/').map(encodeURIComponent).join('/');
       const modelUrl = base + path;
-      const onObj = (group) => {
+      const onObj = async (group, materialCreator = null) => {
+        if (materialCreator) await this._repairObjMaterials(group, modelUrl, materialCreator);
         group.updateMatrixWorld(true);
         // Apply SH3D's optional model rotation before we normalize the size.
         if (obj.modelRotation) {
@@ -683,8 +685,9 @@ export class Viewer {
           const objLoader = new OBJLoader();
           objLoader.setMaterials(materials);
           objLoader.setPath(base);
-          objLoader.load(path, onObj, undefined, (err) => this._loadObjWithoutMtl(objLoader, modelUrl, onObj, reject, err));
-        }, undefined, () => {
+          objLoader.load(path, (group) => onObj(group, materials), undefined, (err) => this._loadObjWithoutMtl(objLoader, modelUrl, onObj, reject, err));
+        }, undefined, (err) => {
+          (window.__modelErrors ||= []).push('MTL ' + obj.model + ': ' + err);
           const objLoader = new OBJLoader();
           objLoader.setPath(base);
           objLoader.load(path, onObj, undefined, reject);
@@ -697,6 +700,35 @@ export class Viewer {
     }).then(group => { this.cache.set(key, group); this.pending.delete(key); return group; }).catch(err => { this.pending.delete(key); throw err; });
     this.pending.set(key, promise);
     return promise;
+  }
+
+  async _repairObjMaterials(group, modelUrl, materials) {
+    try {
+      const response = await fetch(modelUrl);
+      if (!response.ok) return;
+      const text = await response.text();
+      const names = [];
+      const mappedFallback = Object.values(materials.materials || {}).find(m => m && m.map) || null;
+      for (const line of text.split('\n')) {
+        const match = /^usemtl\s+(.+?)\s*$/.exec(line);
+        if (match && !names.includes(match[1])) names.push(match[1]);
+      }
+      if (!names.length) return;
+      group.traverse(node => {
+        if (!node.isMesh) return;
+        const mats = Array.isArray(node.material) ? node.material : [node.material];
+        const fixed = mats.map((mat, i) => {
+          if (mat && mat.name && (mat.map || !mappedFallback)) return mat;
+          const name = names[Math.min(i, names.length - 1)];
+          let replacement = materials.create(name);
+          if ((!replacement || !replacement.map) && mappedFallback) replacement = mappedFallback;
+          return replacement || mat;
+        });
+        node.material = Array.isArray(node.material) ? fixed : fixed[0];
+      });
+    } catch (err) {
+      console.warn('OBJ material repair failed', err);
+    }
   }
 
   _loadObjWithoutMtl(loader, url, onObj, reject, originalErr) {
