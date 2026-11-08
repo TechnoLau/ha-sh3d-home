@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.3';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.4';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -785,7 +785,8 @@ export class Viewer {
     if (obj.kind !== 'light') return;
     const raw = mapping?.appearance?.lightOffset || {};
     const x = Number.isFinite(Number(raw.x)) ? Number(raw.x) : 0;
-    const y = Number.isFinite(Number(raw.y)) ? Number(raw.y) : obj.height * S * 0.68;
+    const defaultY = obj.elevation > 100 ? obj.height * S * 0.12 : obj.height * S * 0.7;
+    const y = Number.isFinite(Number(raw.y)) ? Number(raw.y) : defaultY;
     const z = Number.isFinite(Number(raw.z)) ? Number(raw.z) : 0;
     const point = wrapper.userData.point;
     const glow = wrapper.userData.glow;

@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.2.3';
+import { Viewer } from './viewer.js?v=0.2.4';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.2.3';
+} from './rules.js?v=0.2.4';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1020,7 +1020,7 @@ function renderLookTab(body, obj, m) {
     ${obj.kind === 'light' ? (() => {
       const off = a.lightOffset || {};
       const lx = off.x !== undefined ? Number(off.x) * 100 : 0;
-      const ly = off.y !== undefined ? Number(off.y) * 100 : obj.height * 0.68;
+      const ly = off.y !== undefined ? Number(off.y) * 100 : obj.height * (obj.elevation > 100 ? 0.12 : 0.7);
       const lz = off.z !== undefined ? Number(off.z) * 100 : 0;
       return `<div class="section">
         <div class="section-head"><h3>Lichtpunkt (LED)</h3><span class="hint" style="margin:0">nur Lampe</span></div>
@@ -1089,8 +1089,8 @@ function renderLookTab(body, obj, m) {
   }
   $$('[data-led]').forEach(b => b.addEventListener('click', () => {
     const v = ledValues();
-    if (b.dataset.led === 'reset') { setLed({ x: 0, y: obj.height * S_LIGHT * 0.68, z: 0 }); renderInspector(obj); return; }
-    v.y = obj.height * S_LIGHT * (b.dataset.led === 'top' ? 1.05 : b.dataset.led === 'bottom' ? 0.12 : 0.58);
+    if (b.dataset.led === 'reset') { setLed({ x: 0, y: obj.height * S_LIGHT * (obj.elevation > 100 ? 0.12 : 0.7), z: 0 }); renderInspector(obj); return; }
+    v.y = obj.height * S_LIGHT * (b.dataset.led === 'top' ? 1.05 : b.dataset.led === 'bottom' ? 0.08 : 0.55);
     setLed(v);
   }));
   const updateTransform = (patch) => {
