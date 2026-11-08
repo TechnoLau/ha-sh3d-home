@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.7';
+import { Viewer } from './viewer.js?v=0.4.8';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.7';
+} from './rules.js?v=0.4.8';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1424,7 +1424,7 @@ function openSettingsModal() {
       <div class="modal-section"><h3>Modell</h3>
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
         <div class="btn-row" style="margin-top:9px"><button class="btn btn-small" id="setUpload"><svg><use href="#i-upload"/></svg> Neues Modell</button><a class="btn btn-small" href="models/${state.model.id}/source" download><svg><use href="#i-copy"/></svg> .sh3d</a></div>
-        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
+        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setFloorsEdit"><svg><use href="#i-layers"/></svg> Etagen einteilen</button><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
         <p class="hint">Neue Modelle werden über <b>Neu</b> mit OBJ, SH3D, MTL und Texturen importiert.</p>
       </div>
       <div class="modal-section"><h3>Verbindung</h3>
@@ -1478,6 +1478,7 @@ function openSettingsModal() {
     applyScene();
   }));
   $('#setUpload').addEventListener('click', () => { closeModal(); openImportWizard(); });
+  $('#setFloorsEdit')?.addEventListener('click', () => { closeModal(); openFloorEditor(); });
   $('#setDelete').addEventListener('click', async () => {
     if (!confirm(`Modell „${state.model.name}“ wirklich löschen?`)) return;
     try { await api(`models/${state.model.id}`, { method: 'DELETE' }); state.models = state.models.filter(m => m.id !== state.model.id); closeModal(); if (state.models.length) await openModel(state.models[0]); else { state.model = null; state.scene = null; setEmpty(true); } toast('Modell gelöscht'); } catch (err) { toast(err.message, true); }
@@ -1557,7 +1558,7 @@ function openImportWizard() {
       </div>
       <div class="insight"><svg><use href="#i-cloud"/></svg><div>Das OBJ braucht die MTL und die Texturen aus demselben Export. Ohne Texturen wird das Modell trotzdem geladen, aber ohne Bildmaterial.</div></div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="importRun" disabled><svg><use href="#i-upload"/></svg> Verarbeiten</button></div>`;
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn" id="importObjOnly" disabled>Nur OBJ + MTL</button><button class="btn btn-primary" id="importRun" disabled><svg><use href="#i-upload"/></svg> Verarbeiten</button></div>`;
   openModal();
   const setFile = (kind, files) => {
     if (kind === 'mtl') {
@@ -1576,6 +1577,8 @@ function openImportWizard() {
     step.querySelector('.import-file').textContent = label;
     step.classList.toggle('has-file', !!label);
     $('#importRun').disabled = !(importWizard.obj && importWizard.sh3d);
+    const only = $('#importObjOnly');
+    if (only) only.disabled = !importWizard.obj;
   };
   $$('.import-step').forEach(step => {
     const kind = step.dataset.kind;
@@ -1624,6 +1627,85 @@ function openImportWizard() {
     xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim Import', true); };
     xhr.send(fd);
   });
+  const objOnly = $('#importObjOnly');
+  objOnly.addEventListener('click', () => {
+    if (!importWizard?.obj) return;
+    const fd = new FormData();
+    fd.append('obj', importWizard.obj, importWizard.obj.name);
+    if (importWizard.mtl) fd.append('mtl', importWizard.mtl, importWizard.mtl.name);
+    for (const texture of importWizard.textures) fd.append('textures', texture, texture.name);
+    fd.append('name', importWizard.obj.name.replace(/\.obj$/i, '').replace(/[_-]+/g, ' '));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', new URL('import-obj', API));
+    showLoader(true, 'OBJ wird importiert');
+    setLoaderProgress(.08, 'OBJ und Materialien werden verarbeitet');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) setLoaderProgress(.08 + e.loaded / e.total * .5, `${(e.loaded / 1048576).toFixed(1)} / ${(e.total / 1048576).toFixed(1)} MB`); };
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          const list = await api('models'); state.models = list.models || [];
+          await openModel(data.model); closeModal(); toast('OBJ importiert — jetzt Etagen einteilen'); setTimeout(() => openFloorEditor(), 400);
+        } catch (err) { hideLoader(); toast(err.message, true); }
+      } else { hideLoader(); toast('OBJ-Import fehlgeschlagen: ' + (xhr.responseText || xhr.statusText), true); }
+    };
+    xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim OBJ-Import', true); };
+    xhr.send(fd);
+  });
+}
+
+
+function openFloorEditor() {
+  if (!state.scene?.obj) { toast('Dieses Modell hat keine OBJ-Geometrie', true); return; }
+  const b = state.scene.obj.bounds;
+  const low = Number(b.minY), high = Number(b.maxY);
+  const cuts = Array.isArray(state.scene.obj.cuts) ? [...state.scene.obj.cuts] : [];
+  els.modal.className = 'modal';
+  els.modal.innerHTML = `
+    <div class="modal-head"><div><h2>Etagen einteilen</h2><p>Horizontalen Trenner verschieben und für jede Etage eine Trennfläche setzen.</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="field"><label>Trennfläche</label>
+        <input type="range" id="cutRange" min="${Math.floor(low)}" max="${Math.ceil(high)}" step="1" value="${Math.round((low + high) / 2)}">
+        <div class="slider-row"><span></span><output id="cutValue">${Math.round((low + high) / 2)} cm</output></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-small" id="addCut"><svg><use href="#i-plus"/></svg> Trenner setzen</button><button class="btn btn-small btn-ghost" id="clearCuts">Alle Trenner löschen</button></div>
+      <div id="cutList" class="chip-row" style="margin-top:10px"></div>
+      <div class="insight"><svg><use href="#i-layers"/></svg><div>Von unten nach oben: Jeder gesetzte Trenner beendet die aktuelle Etage. Beim Übernehmen werden die Etagen-Buttons neu erzeugt.</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="saveCuts"><svg><use href="#i-check"/></svg> Etagen übernehmen</button></div>`;
+  openModal();
+  const range = $('#cutRange');
+  const renderCuts = () => {
+    cuts.sort((a, b) => a - b);
+    $('#cutList').innerHTML = cuts.map((c, i) => `<button class="chip is-active" data-cut="${i}">${Math.round(c)} cm ×</button>`).join('');
+    $$('#cutList [data-cut]').forEach(btn => btn.addEventListener('click', () => { cuts.splice(Number(btn.dataset.cut), 1); renderCuts(); }));
+  };
+  const preview = () => {
+    const y = Number(range.value);
+    $('#cutValue').textContent = `${y} cm`;
+    viewer?.setCutPlane(y, true);
+  };
+  range.addEventListener('input', preview);
+  $('#addCut').addEventListener('click', () => {
+    const y = Number(range.value);
+    if (y > low + 10 && y < high - 10) cuts.push(y);
+    cuts.sort((a, b) => a - b);
+    renderCuts();
+  });
+  $('#clearCuts').addEventListener('click', () => { cuts.length = 0; renderCuts(); });
+  $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+  $('#saveCuts').addEventListener('click', async () => {
+    try {
+      const data = await api(`models/${state.model.id}/floors`, { method: 'PUT', body: { cuts } });
+      viewer?.setCutPlane(0, false);
+      closeModal();
+      const list = await api('models'); state.models = list.models || [];
+      await openModel(state.models.find(m => m.id === state.model.id) || state.model);
+      toast(`${data.levels.length} Etagen gespeichert`);
+    } catch (err) { toast('Etagen speichern fehlgeschlagen: ' + err.message, true); }
+  });
+  renderCuts();
+  preview();
 }
 
 function pickFile() { els.fileInput.click(); }

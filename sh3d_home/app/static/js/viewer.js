@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.7';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.8';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -340,7 +340,9 @@ export class Viewer {
   _clearScene() {
     for (const group of this.levelGroups.values()) this.root.remove(group);
     if (this.objRoot) this.root.remove(this.objRoot);
+    if (this.cutPlane) this.root.remove(this.cutPlane);
     this.objRoot = null;
+    this.cutPlane = null;
     this.objVisual = false;
     for (const label of this.roomLabels) label.remove();
     this.levelGroups.clear();
@@ -352,6 +354,7 @@ export class Viewer {
     this.objGroups = new Map();
     this.objVisual = false;
     this.objRoot = null;
+    this.cutPlane = null;
     this.objRoomLevels = new Set();
     this.objFloorLevels = new Set();
     this.objLevelGroups = new Map();
@@ -379,6 +382,23 @@ export class Viewer {
 
   _levelY(id) {
     return ((this.levels.get(id)?.elevation || 0) + (Number(this.levelOffsets[id]) || 0)) * S;
+  }
+
+
+  setCutPlane(y, visible = true) {
+    if (!this.sceneData) return;
+    const b = this.sceneData.bounds;
+    const w = Math.max(1, (b.maxX - b.minX) * S * 1.06);
+    const d = Math.max(1, (b.maxY - b.minY) * S * 1.06);
+    if (!this.cutPlane) {
+      const mat = new THREE.MeshBasicMaterial({ color: '#ff9c5b', transparent: true, opacity: .18, side: THREE.DoubleSide, depthWrite: false });
+      this.cutPlane = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+      this.cutPlane.rotation.x = -Math.PI / 2;
+      this.root.add(this.cutPlane);
+    }
+    this.cutPlane.scale.set(w / this.cutPlane.geometry.parameters.width, d / this.cutPlane.geometry.parameters.height, 1);
+    this.cutPlane.position.set(0, Number(y) * S, 0);
+    this.cutPlane.visible = !!visible;
   }
 
   setLevelOffsets(offsets = {}) {

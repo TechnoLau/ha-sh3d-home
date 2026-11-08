@@ -237,7 +237,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.4.7"),
+        "version": os.environ.get("SH3D_VERSION", "0.4.8"),
     })
 
 
@@ -396,6 +396,119 @@ async def _store_package(sh3d_path: Path, zip_path: Path, display_name: str | No
     return meta
 
 
+
+async def api_import_obj(request: web.Request) -> web.Response:
+    """Standalone OBJ import. Floors can be cut manually afterwards."""
+    reader = await request.multipart()
+    temp_dir = Path(tempfile.mkdtemp(prefix="sh3d-objonly-"))
+    files: dict[str, Path] = {}
+    textures: list[Path] = []
+    display_name = None
+    try:
+        async for field in reader:
+            if field.name == "name":
+                display_name = (await field.text()).strip() or None
+                continue
+            if field.name not in ("obj", "mtl", "textures", "texture"):
+                await field.release(); continue
+            filename = Path(field.filename or f"{field.name}.bin").name
+            dest = temp_dir / filename
+            with dest.open("wb") as out:
+                while True:
+                    chunk = await field.read_chunk(1024 * 512)
+                    if not chunk: break
+                    out.write(chunk)
+            if field.name in ("textures", "texture"): textures.append(dest)
+            else: files[field.name] = dest
+        if "obj" not in files:
+            raise web.HTTPBadRequest(text="Bitte eine OBJ-Datei auswählen")
+        obj_name = files["obj"].name
+        digest = hashlib.sha256(files["obj"].read_bytes()).hexdigest()[:12]
+        model_id = digest
+        folder = MODELS_DIR / model_id
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(files["obj"], folder / "source.obj")
+        # Build a temporary ZIP for the existing OBJ asset importer.
+        zip_path = temp_dir / "objonly.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            archive.write(files["obj"], files["obj"].name)
+            if "mtl" in files: archive.write(files["mtl"], files["mtl"].name)
+            for path in textures: archive.write(path, path.name)
+        placeholder = {
+            "name": display_name or Path(obj_name).stem,
+            "sourceFile": obj_name,
+            "source": "obj",
+            "schema": 2,
+            "levels": [{"id": "obj-level-0", "name": "Etage 1", "elevation": 0.0, "height": 250.0}],
+            "rooms": [], "walls": [], "objects": [],
+            "bounds": {"minX": 0, "maxX": 1, "minY": 0, "maxY": 1, "width": 1, "depth": 1},
+            "stats": {"levels": 1, "rooms": 0, "objects": 0, "lights": 0, "doors": 0, "windows": 0, "heaters": 0, "speakers": 0, "screens": 0, "computers": 0, "walls": 0},
+            "sceneVersion": 2,
+        }
+        obj = await asyncio.to_thread(obj_import.import_obj_zip, zip_path, folder, placeholder, placeholder["name"])
+        obj["importedAt"] = now_iso()
+        b = obj["bounds"]
+        bounds = {"minX": b["minX"], "maxX": b["maxX"], "minY": b["minZ"], "maxY": b["maxZ"], "width": b["width"], "depth": b["depth"]}
+        height = max(1.0, b["maxY"] - b["minY"])
+        placeholder["levels"] = [{"id": "obj-level-0", "name": "Etage 1", "elevation": 0.0, "height": round(height, 2)}]
+        placeholder["bounds"] = bounds
+        placeholder["obj"] = obj
+        placeholder["objects"] = obj["objects"]
+        placeholder["stats"].update({"objects": len(obj["objects"]), "lights": sum(1 for o in obj["objects"] if o["kind"] == "light"), "doors": sum(1 for o in obj["objects"] if o["kind"] == "door"), "windows": sum(1 for o in obj["objects"] if o["kind"] == "window")})
+        (folder / "scene.json").write_text(json.dumps(placeholder, ensure_ascii=False))
+        meta = {"id": model_id, "name": placeholder["name"], "sourceFile": obj_name, "importedAt": placeholder.get("importedAt") or now_iso(), "stats": placeholder["stats"], "levels": placeholder["levels"], "bounds": bounds, "sha256": digest, "size": files["obj"].stat().st_size, "obj": {"groups": len(obj["groups"]), "objects": len(obj["objects"])}}
+        STORE.write_meta(model_id, meta)
+        STORE.get_config(model_id)
+        STORE.models[model_id] = meta
+        STORE.scene_cache[model_id] = placeholder
+        return json_response({"ok": True, "model": meta})
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def api_save_floors(request: web.Request) -> web.Response:
+    model_id = validate_model_id(request.match_info["model_id"])
+    if model_id not in STORE.models:
+        raise web.HTTPNotFound(text="Modell nicht gefunden")
+    data = await read_json(request)
+    cuts = sorted({round(float(v), 2) for v in (data.get("cuts") or []) if isinstance(v, (int, float))})
+    folder = MODELS_DIR / model_id
+    scene_file = folder / "scene.json"
+    scene = json.loads(scene_file.read_text())
+    if not scene.get("obj"):
+        raise web.HTTPBadRequest(text="Kein OBJ-Modell")
+    obj = scene["obj"]
+    b = obj["bounds"]
+    low, high = b["minY"], b["maxY"]
+    cuts = [c for c in cuts if low + 5 < c < high - 5]
+    boundaries = [low] + cuts + [high]
+    levels = []
+    for i in range(len(boundaries) - 1):
+        levels.append({"id": f"obj-level-{i}", "name": f"Etage {i + 1}", "elevation": round(boundaries[i] - low, 2), "height": round(boundaries[i + 1] - boundaries[i], 2)})
+    def level_for(y):
+        for i in range(len(levels)):
+            if boundaries[i] <= y + 2 and y < boundaries[i + 1] - 2:
+                return levels[i]["id"]
+        return levels[-1]["id"]
+    for g in obj.get("groups", []):
+        g["level"] = level_for((g.get("bbox", {}).get("minY", low) + g.get("bbox", {}).get("maxY", low)) / 2)
+    for o in obj.get("objects", []):
+        o["level"] = level_for(o.get("elevation", low) + o.get("height", 0) / 2)
+    scene["levels"] = levels
+    obj["cuts"] = cuts
+    scene["objects"] = obj.get("objects", [])
+    scene["bounds"] = {"minX": b["minX"], "maxX": b["maxX"], "minY": b["minZ"], "maxY": b["maxZ"], "width": b["width"], "depth": b["depth"]}
+    scene_file.write_text(json.dumps(scene, ensure_ascii=False))
+    STORE.scene_cache[model_id] = scene
+    meta = STORE.models[model_id]
+    meta["levels"] = levels
+    meta["stats"] = {**meta.get("stats", {}), "levels": len(levels)}
+    STORE.write_meta(model_id, meta)
+    return json_response({"ok": True, "levels": levels})
+
+
 async def api_import_package(request: web.Request) -> web.Response:
     """Upload OBJ + SH3D + MTL + textures as separate multipart fields."""
     reader = await request.multipart()
@@ -542,7 +655,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.7"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.8"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -612,7 +725,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.7",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.4.8",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -622,7 +735,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.7"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.4.8"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
@@ -701,6 +814,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/models/{model_id}/assets/{path:.*}", api_assets)
     app.router.add_post("/api/models", api_upload)
     app.router.add_post("/api/import-package", api_import_package)
+    app.router.add_post("/api/import-obj", api_import_obj)
+    app.router.add_put("/api/models/{model_id}/floors", api_save_floors)
     app.router.add_post("/api/models/{model_id}/obj", api_attach_obj)
     app.router.add_post("/api/import/scan", api_scan)
     app.router.add_get("/api/entities", api_entities)
