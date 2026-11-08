@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.2.1';
+import { Viewer } from './viewer.js?v=0.2.2';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.2.1';
+} from './rules.js?v=0.2.2';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -169,6 +169,7 @@ async function openModel(model) {
     viewer.setCeilings(!!sc.showCeilings);
     viewer.setStackLevels(sc.stackLevels !== false);
     viewer.setAutoRotate(!!sc.autoRotate);
+    viewer.setTransforms(state.config.transforms || {});
     hideLoader();
     setEmpty(false);
     applyInitialScope();
@@ -688,7 +689,8 @@ function updateMapping(obj, patch, rerender = true) {
   const existing = normalizeMapping(state.config.mappings[obj.id] || {});
   const next = { ...existing, ...patch, appearance: { ...existing.appearance, ...(patch.appearance || {}) } };
   next.rules = (patch.rules !== undefined ? patch.rules : existing.rules).map(normalizeRule);
-  if (!next.entity_id && !next.rules.length && !next.label) delete state.config.mappings[obj.id];
+  const visualOnly = !!(next.appearance?.lightOffset || next.appearance?.color || next.appearance?.glow !== 1);
+  if (!next.entity_id && !next.rules.length && !next.label && !visualOnly) delete state.config.mappings[obj.id];
   else state.config.mappings[obj.id] = next;
   viewer?.setMappings(state.config.mappings);
   scheduleSave();
@@ -1015,6 +1017,31 @@ function renderLookTab(body, obj, m) {
       <div class="field"><label>Akzentfarbe (ohne Farb-Entität)</label><div class="color-row"><input type="color" id="accentColor" value="${a.color || '#ffbf7a'}"><button class="btn btn-small btn-ghost" id="clearAccent">Automatisch</button></div></div>
       <p class="hint">Die Farbe aus Home Assistant (RGB) hat Vorrang; diese Farbe ist der Fallback und für Regeln nützlich.</p>
     </div>
+    ${obj.kind === 'light' ? (() => {
+      const off = a.lightOffset || {};
+      const lx = off.x !== undefined ? Number(off.x) * 100 : 0;
+      const ly = off.y !== undefined ? Number(off.y) * 100 : obj.height * 0.68;
+      const lz = off.z !== undefined ? Number(off.z) * 100 : 0;
+      return `<div class="section">
+        <div class="section-head"><h3>Lichtpunkt (LED)</h3><span class="hint" style="margin:0">nur Lampe</span></div>
+        <div class="slider-row"><span style="width:16px;font-size:10px">X</span><input type="range" id="ledX" min="-150" max="150" step="1" value="${lx}"><output>${lx.toFixed(0)} cm</output></div>
+        <div class="slider-row"><span style="width:16px;font-size:10px">Y</span><input type="range" id="ledY" min="0" max="${Math.round(obj.height * 1.25)}" step="1" value="${ly}"><output>${ly.toFixed(0)} cm</output></div>
+        <div class="slider-row"><span style="width:16px;font-size:10px">Z</span><input type="range" id="ledZ" min="-150" max="150" step="1" value="${lz}"><output>${lz.toFixed(0)} cm</output></div>
+        <div class="chip-row" style="margin-top:7px"><button class="chip" data-led="top">LED oben</button><button class="chip" data-led="middle">Mitte</button><button class="chip" data-led="bottom">Unten</button><button class="chip" data-led="reset">Zurücksetzen</button></div>
+        <p class="hint">Der Punkt ist relativ zur Lampe. Der gelbe Marker im 3D-Modell zeigt die LED; Licht und Lichtpool wandern mit.</p>
+      </div>`;
+    })() : ''}
+    <div class="section">
+      <h3>Ausrichtung</h3>
+      <div class="chip-row">
+        <button class="chip" data-rot="-90">↺ 90°</button>
+        <button class="chip" data-rot="90">↻ 90°</button>
+        <button class="chip" data-rot="180">180°</button>
+        <button class="chip" data-rot="reset">Zurücksetzen</button>
+        <button class="chip ${state.config?.transforms?.[obj.id]?.mirrorX ? 'is-active' : ''}" data-mirror="1">Spiegeln</button>
+      </div>
+      <p class="hint">Falls ein Modell aus Sweet Home 3D falsch steht, kannst du es hier korrigieren. Die Korrektur wird gespeichert.</p>
+    </div>
     <div class="section">
       <h3>Objekt</h3>
       <div class="stat-grid">
@@ -1033,6 +1060,58 @@ function renderLookTab(body, obj, m) {
       </div>
     </div>
     <button class="btn btn-danger btn-wide" id="deleteMapping"><svg><use href="#i-trash"/></svg> Zuordnung löschen</button>`;
+  const setLed = (patch) => {
+    const off = { ...(a.lightOffset || {}) };
+    Object.assign(off, patch);
+    updateMapping(obj, { appearance: { ...a, lightOffset: off } }, false);
+    viewer?.setStates(state.states);
+  };
+  const ledValues = () => {
+    const off = a.lightOffset || {};
+    return {
+      x: off.x !== undefined ? Number(off.x) : 0,
+      y: off.y !== undefined ? Number(off.y) : obj.height * S_LIGHT,
+      z: off.z !== undefined ? Number(off.z) : 0,
+    };
+  };
+  // S_LIGHT = 0.01 (cm -> m), kept local to the editor.
+  const S_LIGHT = 0.01;
+  for (const axis of ['X', 'Y', 'Z']) {
+    const el = $('#led' + axis);
+    if (!el) continue;
+    el.addEventListener('input', e => {
+      const out = e.target.nextElementSibling;
+      out.textContent = e.target.value + ' cm';
+      const v = ledValues();
+      v[axis.toLowerCase()] = Number(e.target.value) * S_LIGHT;
+      setLed(v);
+    });
+  }
+  $$('[data-led]').forEach(b => b.addEventListener('click', () => {
+    const v = ledValues();
+    if (b.dataset.led === 'reset') { setLed({ x: 0, y: obj.height * S_LIGHT * 0.68, z: 0 }); renderInspector(obj); return; }
+    v.y = obj.height * S_LIGHT * (b.dataset.led === 'top' ? 1.05 : b.dataset.led === 'bottom' ? 0.12 : 0.58);
+    setLed(v);
+  }));
+  const updateTransform = (patch) => {
+    if (!state.config) return;
+    state.config.transforms ||= {};
+    const old = state.config.transforms[obj.id] || {};
+    state.config.transforms[obj.id] = { ...old, ...patch };
+    viewer?.setTransforms(state.config.transforms);
+    scheduleSave(true);
+    toast('Ausrichtung gespeichert');
+  };
+  $$('[data-rot]', body).forEach(b => b.addEventListener('click', () => {
+    const old = state.config?.transforms?.[obj.id]?.rotationOffset || 0;
+    if (b.dataset.rot === 'reset') updateTransform({ rotationOffset: 0 });
+    else updateTransform({ rotationOffset: old + Number(b.dataset.rot) });
+  }));
+  $('[data-mirror]', body)?.addEventListener('click', e => {
+    const old = !!state.config?.transforms?.[obj.id]?.mirrorX;
+    e.currentTarget.classList.toggle('is-active', !old);
+    updateTransform({ mirrorX: !old });
+  });
   $('#glowRange').addEventListener('input', e => { e.target.nextElementSibling.textContent = e.target.value + '%'; });
   $('#glowRange').addEventListener('change', e => {
     updateMapping(obj, { appearance: { ...a, glow: Number(e.target.value) / 100 } }, false);

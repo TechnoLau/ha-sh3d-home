@@ -36,6 +36,7 @@ ALLOWED_SERVICE_ACTIONS = {"toggle", "turn_on", "turn_off", "set_temperature", "
 DEFAULT_CONFIG = {
     "version": 1,
     "mappings": {},
+    "transforms": {},
     "scene": {
         "showCeilings": False,
         "showLabels": True,
@@ -85,7 +86,39 @@ class Store:
                 meta = json.loads(meta_path.read_text())
                 meta["id"] = folder.name
                 self.models[folder.name] = meta
-                self.scene_cache[folder.name] = json.loads(scene_path.read_text())
+                scene = json.loads(scene_path.read_text())
+                # One-time re-import for the reworked wall/opening and inline
+                # material pipeline.  Preserve user mappings and the source.
+                if scene.get("sceneVersion", 1) < 2 and (folder / "source.sh3d").exists():
+                    try:
+                        saved_config = self.get_config(folder.name)
+                        source_bytes = (folder / "source.sh3d").read_bytes()
+                        thumb = (folder / "thumb.png").read_bytes() if (folder / "thumb.png").exists() else None
+                        tmp_source = DATA_DIR / f".migrate-{folder.name}.sh3d"
+                        tmp_source.write_bytes(source_bytes)
+                        scene = sh3d.import_sh3d(tmp_source, folder, folder.name, meta.get("name"))
+                        scene["importedAt"] = meta.get("importedAt") or now_iso()
+                        (folder / "source.sh3d").write_bytes(source_bytes)
+                        if thumb:
+                            (folder / "thumb.png").write_bytes(thumb)
+                        self.put_config(folder.name, saved_config)
+                        (folder / "scene.json").write_text(json.dumps(scene, ensure_ascii=False))
+                        meta.update({
+                            "name": scene["name"], "stats": scene["stats"],
+                            "levels": scene["levels"], "bounds": scene["bounds"],
+                        })
+                        self.write_meta(folder.name, meta)
+                        tmp_source.unlink(missing_ok=True)
+                    except Exception as exc:
+                        _LOGGER.warning("Migration %s fehlgeschlagen: %s", folder.name, exc)
+                        try: tmp_source.unlink(missing_ok=True)
+                        except Exception: pass
+                try:
+                    if sh3d.repair_inline_scene(folder / "assets", scene):
+                        scene_path.write_text(json.dumps(scene, ensure_ascii=False))
+                except Exception as exc:
+                    _LOGGER.warning("Inline-Materialien für %s: %s", folder, exc)
+                self.scene_cache[folder.name] = scene
             except Exception as exc:
                 _LOGGER.warning("Modell %s konnte nicht geladen werden: %s", folder, exc)
 
@@ -202,7 +235,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.2.1"),
+        "version": os.environ.get("SH3D_VERSION", "0.2.2"),
     })
 
 
@@ -367,7 +400,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.1"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.2"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -437,7 +470,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.1",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.2.2",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -447,7 +480,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.2.1"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.2.2"
     for attempt in range(30):
         if BRIDGE.connected:
             try:

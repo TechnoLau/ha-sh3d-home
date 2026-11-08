@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.1';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.2';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -50,6 +50,7 @@ export class Viewer {
     this.sceneData = null;
     this.config = {};
     this.mappings = {};
+    this.transforms = {};
     this.states = {};
     this.modelBase = '';
     this.levelId = null;
@@ -235,6 +236,7 @@ export class Viewer {
     this.modelBase = modelBase || '';
     this.states = {};
     this.mappings = config?.mappings || {};
+    this.transforms = config?.transforms || {};
     this.wallMode = this.config?.scene?.wallMode || 'solid';
     this.showFloors = this.config?.scene?.showFloors !== false;
     this.scope.stackLevels = this.config?.scene?.stackLevels !== false;
@@ -306,15 +308,6 @@ export class Viewer {
     const floorMat = new THREE.MeshStandardMaterial({ color: '#cdbb9d', roughness: 0.88, metalness: 0.02, side: THREE.DoubleSide });
     const slabMat = new THREE.MeshStandardMaterial({ color: '#b9ab94', roughness: 0.95 });
     const ceilMat = new THREE.MeshStandardMaterial({ color: '#f1e8d8', roughness: 0.96, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
-    for (const level of this.sceneData.levels) {
-      const lg = this.levelGroups.get(level.id);
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(this.sceneData.bounds.width * S + .4, .08, this.sceneData.bounds.depth * S + .4), slabMat);
-      slab.position.set(0, this._levelY(level.id) - 0.055, 0);
-      slab.receiveShadow = true;
-      slab.userData.level = level.id;
-      lg.add(slab);
-      this.slabs.push({ mesh: slab, level: level.id });
-    }
     for (const room of this.sceneData.rooms) {
       const lg = this.levelGroups.get(room.level);
       if (!lg) continue;
@@ -458,6 +451,11 @@ export class Viewer {
       pl.position.y = obj.height * S * 0.52;
       wrapper.add(pl);
       wrapper.userData.point = pl;
+      const ledMat = new THREE.MeshBasicMaterial({ color: '#fff3cf' });
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10), ledMat);
+      led.visible = false;
+      wrapper.add(led);
+      wrapper.userData.led = led;
       const poolMat = new THREE.SpriteMaterial({
         map: canvasGlow('#ffd39a'), transparent: true, opacity: 0,
         depthWrite: false, blending: THREE.AdditiveBlending,
@@ -477,6 +475,18 @@ export class Viewer {
       screen.userData.kind = 'screen';
       wrapper.add(screen);
       wrapper.userData.screen = screen;
+      const screenLight = new THREE.PointLight('#8fc7ff', 0, 4.5, 2);
+      screenLight.position.set(0, obj.height * S * .56, obj.depth * S * .62);
+      wrapper.add(screenLight);
+      wrapper.userData.screenLight = screenLight;
+      const screenGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: canvasGlow('#9ad5ff'), transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      screenGlow.scale.set(Math.max(.3, obj.width * S * .9), Math.max(.3, obj.height * S * .7), 1);
+      screenGlow.position.set(0, obj.height * S * .56, obj.depth * S * .58);
+      wrapper.add(screenGlow);
+      wrapper.userData.screenGlow = screenGlow;
     }
     if (kind === 'speaker') {
       const mat2 = new THREE.SpriteMaterial({ map: canvasGlow('#a9e1cf'), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -705,6 +715,11 @@ export class Viewer {
     }
   }
 
+  setTransforms(transforms) {
+    this.transforms = transforms || {};
+    this._applyStates();
+  }
+
   setMappings(mappings) {
     this.mappings = mappings || {};
     for (const [id, btn] of this.floatButtons) if (!this.mappings[id]?.button) { btn.el.remove(); this.floatButtons.delete(id); }
@@ -744,6 +759,10 @@ export class Viewer {
         vs.screen = ['display', 'computer'].includes(obj.kind);
         vs.open = ['door', 'window'].includes(obj.kind);
       }
+      const tf = this.transforms[obj.id] || {};
+      wrapper.rotation.y = -obj.angle + (Number(tf.rotationOffset) || 0) * Math.PI / 180;
+      wrapper.scale.x = tf.mirrorX ? -1 : 1;
+      this._applyLightPlacement(obj, wrapper, mapping);
       this._applyVisual(obj, wrapper, vs, mapped, local);
       const btn = this.floatButtons.get(obj.id);
       if (btn) this._updateFloat(btn, obj, mapping, vs);
@@ -751,11 +770,28 @@ export class Viewer {
     this._applyVisibility();
   }
 
+  _applyLightPlacement(obj, wrapper, mapping) {
+    if (obj.kind !== 'light') return;
+    const raw = mapping?.appearance?.lightOffset || {};
+    const x = Number.isFinite(Number(raw.x)) ? Number(raw.x) : 0;
+    const y = Number.isFinite(Number(raw.y)) ? Number(raw.y) : obj.height * S * 0.68;
+    const z = Number.isFinite(Number(raw.z)) ? Number(raw.z) : 0;
+    const point = wrapper.userData.point;
+    const glow = wrapper.userData.glow;
+    const pool = wrapper.userData.pool;
+    const led = wrapper.userData.led;
+    for (const item of [point, glow, led]) if (item) item.position.set(x, y, z);
+    if (pool) pool.position.set(x, -obj.elevation * S + 0.02, z);
+    if (led) led.visible = this.selectedId === obj.id && !!mapping;
+  }
+
   _applyVisual(obj, wrapper, vs, mapped, local = false) {
     const glow = wrapper.userData.glow;
     const point = wrapper.userData.point;
     const pool = wrapper.userData.pool;
     const screen = wrapper.userData.screen;
+    const screenLight = wrapper.userData.screenLight;
+    const screenGlow = wrapper.userData.screenGlow;
     const pulse = wrapper.userData.pulse;
     const warm = wrapper.userData.warm;
     const arc = wrapper.userData.openArc;
@@ -798,6 +834,9 @@ export class Viewer {
       const on = active && (vs.screen || (vs.on && (obj.kind === 'display' || obj.kind === 'computer')));
       screen.material.color.set(vs.color || '#93ccff');
       screen.material.opacity = on ? 0.7 : 0;
+      screen.userData.active = on;
+      if (screenLight) { screenLight.color.set(vs.color || '#93ccff'); screenLight.intensity = on ? 1.4 : 0; }
+      if (screenGlow) { screenGlow.material.color.set(vs.color || '#93ccff'); screenGlow.material.opacity = on ? 0.32 : 0; screenGlow.userData.active = on; }
     }
     if (pulse) {
       pulse.material.opacity = active ? 0.35 : 0;
@@ -1122,6 +1161,7 @@ export class Viewer {
   selectObject(id) {
     this.selectedId = id;
     this._updateOutline();
+    this._applyStates();
   }
 
   _updateOutline() {
@@ -1315,6 +1355,14 @@ export class Viewer {
         pulse.scale.set(base * s, base * s, 1);
         pulse.material.opacity = 0.12 + 0.16 * (0.5 + 0.5 * Math.sin(now / 280));
       }
+    }
+    for (const wrapper of this.objectGroups.values()) {
+      const screen = wrapper.userData.screen;
+      if (screen?.userData?.active) {
+        screen.material.opacity = 0.58 + 0.12 * Math.sin(now / 420) + 0.035 * Math.sin(now / 73);
+      }
+      const glow = wrapper.userData.screenGlow;
+      if (glow?.userData?.active) glow.material.opacity = 0.24 + 0.1 * (0.5 + 0.5 * Math.sin(now / 520));
     }
     this.updateFloatPositions();
     this.renderer.render(this.scene, this.camera);

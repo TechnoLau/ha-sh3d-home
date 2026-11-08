@@ -221,8 +221,18 @@ def _model_info(model: str | None, home_dir: Path, names: set[str]) -> tuple[str
     try:
         with path.open("rb") as fh:
             head = fh.read(300)
-        if head.startswith(b"#") or b"\nv " in head or head.startswith(b"v "):
-            return model, "obj", None
+        if head.startswith(b"#") or head.startswith(b"mtllib ") or b"\nv " in head or head.startswith(b"v "):
+            mtl = None
+            try:
+                raw = path.read_text(errors="ignore")[:4000]
+                m = re.search(r"^mtllib\s+(.+?)\s*$", raw, re.M)
+                if m:
+                    candidate = (path.parent / m.group(1).strip()).relative_to(home_dir).as_posix()
+                    if (home_dir / candidate).exists():
+                        mtl = candidate
+            except (OSError, ValueError):
+                pass
+            return model, "obj", mtl
     except OSError:
         pass
     return None, "box", None
@@ -252,9 +262,44 @@ def _safe_extract(archive: zipfile.ZipFile, target: Path) -> set[str]:
 def _split_walls(walls: list[dict[str, Any]], openings: list[SceneObject], levels: dict[str, Level]) -> list[dict[str, Any]]:
     """Subtract door/window openings from walls and return box pieces.
 
-    Each piece is described by its two end points and its vertical range, so the
-    client can create a correctly sized box without doing the CSG in JS.
+    Each opening is assigned to the nearest wall only.  Without this, an
+    opening close to a corner would cut a hole into both walls and make the
+    visible wall dimensions wrong.
     """
+    assigned: dict[str, list[tuple[float, float, float, float]]] = {w["id"]: [] for w in walls}
+    for obj in openings:
+        best: tuple[float, dict[str, Any], float] | None = None
+        for wall in walls:
+            if obj.level != wall["level"]:
+                continue
+            x1, y1, x2, y2 = wall["x1"], wall["y1"], wall["x2"], wall["y2"]
+            length = math.hypot(x2 - x1, y2 - y1)
+            if length < 0.5:
+                continue
+            ux, uy = (x2 - x1) / length, (y2 - y1) / length
+            dx, dy = obj.x - x1, obj.y - y1
+            t = dx * ux + dy * uy
+            dist = abs(dx * uy - dy * ux)
+            if t < -40 or t > length + 40:
+                continue
+            if dist > max(50.0, wall["thickness"] * 0.5 + 35.0):
+                continue
+            if best is None or dist < best[0]:
+                best = (dist, wall, t)
+        if best is None:
+            continue
+        _, wall, t_center = best
+        length = math.hypot(wall["x2"] - wall["x1"], wall["y2"] - wall["y1"])
+        half = max(12.0, obj.width / 2)
+        t0 = max(0.0, min(length, t_center - half))
+        t1 = max(0.0, min(length, t_center + half))
+        if t1 <= t0:
+            continue
+        bottom = max(0.0, obj.elevation)
+        top = min(wall["height"], obj.elevation + obj.height)
+        if top - bottom >= 5:
+            assigned[wall["id"]].append((t0, t1, bottom, top))
+
     result: list[dict[str, Any]] = []
     for wall in walls:
         x1, y1, x2, y2 = wall["x1"], wall["y1"], wall["x2"], wall["y2"]
@@ -265,34 +310,12 @@ def _split_walls(walls: list[dict[str, Any]], openings: list[SceneObject], level
                            "z0": 0.0, "z1": wall["height"]})
             continue
         ux, uy = (x2 - x1) / length, (y2 - y1) / length
-        level = levels.get(wall["level"])
-        ops: list[tuple[float, float, float, float]] = []
-        for obj in openings:
-            if obj.level != wall["level"]:
-                continue
-            dx, dy = obj.x - x1, obj.y - y1
-            t = dx * ux + dy * uy
-            dist = abs(dx * uy - dy * ux)
-            if dist > max(45.0, wall["thickness"] / 2 + 28.0):
-                continue
-            if t < -30 or t > length + 30:
-                continue
-            half = max(12.0, obj.width / 2)
-            t0 = max(0.0, t - half)
-            t1 = min(length, t + half)
-            if t1 <= t0:
-                continue
-            bottom = max(0.0, obj.elevation)
-            top = min(wall["height"], obj.elevation + obj.height)
-            if top - bottom < 5:
-                continue
-            ops.append((t0, t1, bottom, top))
-        ops.sort()
+        ops = sorted(assigned.get(wall["id"], []))
         cursor = 0.0
         for t0, t1, bottom, top in ops:
+            if t1 <= cursor + 0.2:
+                continue
             t0 = max(t0, cursor)
-            if t0 <= cursor + 0.3:
-                t0 = cursor
             if t0 > cursor + 0.3:
                 result.append(_wall_piece(wall, x1, y1, ux, uy, cursor, t0, 0.0, wall["height"], "wall"))
             if bottom > 0.3:
@@ -302,6 +325,9 @@ def _split_walls(walls: list[dict[str, Any]], openings: list[SceneObject], level
             cursor = max(cursor, t1)
         if cursor < length - 0.3:
             result.append(_wall_piece(wall, x1, y1, ux, uy, cursor, length, 0.0, wall["height"], "wall"))
+        if not assigned.get(wall["id"]):
+            # Keep a clean full wall for walls without openings.
+            result.append(_wall_piece(wall, x1, y1, ux, uy, 0.0, length, 0.0, wall["height"], "wall"))
     return result
 
 
@@ -316,6 +342,91 @@ def _wall_piece(wall: dict[str, Any], x1: float, y1: float, ux: float, uy: float
     }
 
 
+
+def _inline_color(name: str) -> tuple[tuple[float, float, float], float]:
+    n = _norm(name)
+    if any(k in n for k in ("glass", "glazing", "verre", "transparent")):
+        return (0.55, 0.72, 0.76), 0.48
+    if any(k in n for k in ("black", "noir", "dark", "schwarz")):
+        return (0.055, 0.05, 0.045), 1.0
+    if any(k in n for k in ("white", "blanc", "weiss")):
+        return (0.86, 0.82, 0.74), 1.0
+    if any(k in n for k in ("wood", "bois", "oak", "walnut", "acajou", "brown", "braun")):
+        return (0.47, 0.28, 0.13), 1.0
+    if any(k in n for k in ("silver", "metal", "steel", "chrome", "alu", "argent")):
+        return (0.56, 0.58, 0.57), 1.0
+    if any(k in n for k in ("red", "rouge", "rot")):
+        return (0.58, 0.12, 0.08), 1.0
+    if any(k in n for k in ("green", "vert", "gruen")):
+        return (0.25, 0.42, 0.28), 1.0
+    if any(k in n for k in ("blue", "bleu", "blau")):
+        return (0.2, 0.33, 0.5), 1.0
+    if any(k in n for k in ("gold", "brass", "laiton", "or")):
+        return (0.62, 0.46, 0.16), 1.0
+    if any(k in n for k in ("fabric", "textile", "cushion", "coussin", "stoff")):
+        return (0.38, 0.35, 0.3), 1.0
+    palette = [
+        (0.62, 0.56, 0.46), (0.5, 0.42, 0.33), (0.7, 0.66, 0.58),
+        (0.4, 0.36, 0.31), (0.58, 0.5, 0.42), (0.46, 0.48, 0.45),
+    ]
+    return palette[sum(ord(c) for c in n) % len(palette)], 1.0
+
+
+def enrich_inline_materials(assets: Path) -> dict[str, str]:
+    """Give extension-less OBJ models in a .sh3d a generated MTL.
+
+    Built-in Sweet Home 3D models often embed ``usemtl`` names but no MTL
+    file.  A generated palette makes those models readable instead of one
+    flat white/grey block.  Returns model path -> mtl path.
+    """
+    made: dict[str, str] = {}
+    for path in assets.iterdir():
+        if not path.is_file() or path.suffix:
+            continue
+        try:
+            head = path.read_bytes()[:1200]
+        except OSError:
+            continue
+        if not (head.startswith(b"#") or head.startswith(b"v ") or b"\nv " in head):
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except OSError:
+            continue
+        if "\nmtllib " in "\n" + text[:4000]:
+            continue
+        names: list[str] = []
+        for line in text.splitlines():
+            if line.startswith("usemtl "):
+                name = line[7:].strip()
+                if name and name not in names:
+                    names.append(name)
+        if not names:
+            continue
+        mtl_name = "inline_" + path.name + ".mtl"
+        mtl_path = assets / mtl_name
+        if not mtl_path.exists():
+            lines = ["# generated by SH3D Home", ""]
+            for name in names:
+                (r, g, b), alpha = _inline_color(name)
+                lines += [f"newmtl {name}", f"Kd {r:.4f} {g:.4f} {b:.4f}",
+                          "Ks 0.04 0.04 0.04", "Ns 28", "illum 2", f"d {alpha:.2f}", ""]
+            mtl_path.write_text("\n".join(lines))
+        path.write_text(f"mtllib {mtl_name}\n" + text)
+        made[path.name] = mtl_name
+    return made
+
+def repair_inline_scene(assets: Path, scene: dict[str, Any]) -> bool:
+    made = enrich_inline_materials(assets)
+    changed = False
+    for obj in scene.get("objects", []):
+        model = obj.get("model")
+        if model and not obj.get("mtl") and model in made:
+            obj["mtl"] = made[model]
+            changed = True
+    return changed
+
+
 def import_sh3d(source: Path, target: Path, model_id: str, display_name: str | None = None) -> dict[str, Any]:
     """Import a .sh3d into *target* and return the scene metadata."""
     if not zipfile.is_zipfile(source):
@@ -328,6 +439,7 @@ def import_sh3d(source: Path, target: Path, model_id: str, display_name: str | N
         if "Home.xml" not in z.namelist():
             raise ValueError("Im Archiv fehlt Home.xml – ist das wirklich eine .sh3d-Datei?")
         names = _safe_extract(z, assets)
+    enrich_inline_materials(assets)
     # Sweet Home 3D archives occasionally reference textures that were not
     # embedded. Remove those map lines so the material's Kd color is used
     # instead of a black/missing texture.
@@ -466,6 +578,7 @@ def import_sh3d(source: Path, target: Path, model_id: str, display_name: str | N
     level_list = sorted(levels.values(), key=lambda l: (l.elevation, l.name))
     scene = {
         "id": model_id,
+        "sceneVersion": 2,
         "name": display_name or source.stem.replace("_", " ").title(),
         "sourceFile": source.name,
         "importedAt": None,
