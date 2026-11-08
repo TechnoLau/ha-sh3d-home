@@ -29,8 +29,23 @@ class Sh3dHomeCard extends HTMLElement {
     if (!this._rendered && hass) this._render();
   }
 
-  connectedCallback() { window.addEventListener('resize', this._resizeHandler); }
-  disconnectedCallback() { window.removeEventListener('resize', this._resizeHandler); }
+  connectedCallback() {
+    window.addEventListener('resize', this._resizeHandler);
+    this._setupSessionRefresh();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('resize', this._resizeHandler);
+    if (this._sessionTimer) clearInterval(this._sessionTimer);
+    this._sessionTimer = null;
+  }
+
+  _setupSessionRefresh() {
+    if (this._sessionTimer) clearInterval(this._sessionTimer);
+    this._sessionTimer = setInterval(() => {
+      this._createSession().catch(() => {});
+    }, 45000);
+  }
 
   getCardSize() { return Math.max(4, Math.ceil((this._config.height || 460) / 50)); }
 
@@ -110,6 +125,7 @@ class Sh3dHomeCard extends HTMLElement {
       const ingress = info?.ingress_url || info?.ingress_entry;
       if (!ingress) throw new Error('Kein Ingress-Pfad für SH3D Home gefunden');
       await this._createSession();
+      this._setupSessionRefresh();
       const src = this._params(ingress.endsWith('/') ? ingress : ingress + '/');
       const full = new URL(this._params((ingress.endsWith('/') ? ingress : ingress + '/')));
       full.searchParams.delete('embed');
