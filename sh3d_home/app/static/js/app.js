@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.3.1';
+import { Viewer } from './viewer.js?v=0.3.2';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.3.1';
+} from './rules.js?v=0.3.2';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -333,6 +333,11 @@ function bindShell() {
   $('#btnDashboard').addEventListener('click', openDashboardModal);
   $('#btnSettings').addEventListener('click', openSettingsModal);
   $('#btnSidebarOpen').addEventListener('click', () => renderObjects());
+  $('#objInput').addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) uploadObjVisual(file);
+  });
   $('#fileInput').addEventListener('change', e => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -1414,6 +1419,8 @@ function openSettingsModal() {
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
         <div class="btn-row" style="margin-top:9px"><button class="btn btn-small" id="setUpload"><svg><use href="#i-upload"/></svg> Neues Modell</button><a class="btn btn-small" href="models/${state.model.id}/source" download><svg><use href="#i-copy"/></svg> .sh3d</a></div>
         <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setScan">Ordner scannen</button><button class="btn btn-small btn-danger" id="setDelete"><svg><use href="#i-trash"/></svg> Modell löschen</button></div>
+        <div class="btn-row" style="margin-top:6px"><button class="btn btn-small" id="setObj"><svg><use href="#i-cube"/></svg> OBJ-Ansicht (ZIP)</button></div>
+        <p class="hint">OBJ-ZIP mit <code>.obj</code>, <code>.mtl</code> und Texturen. Die OBJ-Ansicht ersetzt die Oberfläche; Zimmer, Geräte und Zuordnungen bleiben aus der SH3D-Datei erhalten. ${state.scene?.obj ? '<b>OBJ aktiv.</b>' : ''}</p>
         <p class="hint">Beim Start werden .sh3d-Dateien aus <code>/share/sh3d-home</code>, <code>/share</code> und <code>/media</code> automatisch importiert.</p>
       </div>
       <div class="modal-section"><h3>Verbindung</h3>
@@ -1454,6 +1461,7 @@ function openSettingsModal() {
     applyScene();
   }));
   $('#setUpload').addEventListener('click', () => { closeModal(); pickFile(); });
+  $('#setObj').addEventListener('click', () => $('#objInput').click());
   $('#setScan').addEventListener('click', async () => {
     try { const r = await api('import/scan', { method: 'POST', body: {} }); toast(r.imported?.length ? `${r.imported.length} Modell(e) importiert` : 'Keine neuen Dateien gefunden'); if (r.imported?.length) { const data = await api('models'); state.models = data.models || []; openModelPicker(); } } catch (err) { toast(err.message, true); }
   });
@@ -1484,6 +1492,33 @@ function openModelPicker() {
   $('#pickScan').addEventListener('click', async () => {
     try { const r = await api('import/scan', { method: 'POST', body: {} }); const data = await api('models'); state.models = data.models || []; closeModal(); if (r.imported?.length) await openModel(r.imported[0]); else toast('Keine neuen Dateien'); } catch (err) { toast(err.message, true); }
   });
+}
+
+function uploadObjVisual(file) {
+  if (!file.name.toLowerCase().endsWith('.zip')) { toast('Bitte ein ZIP mit OBJ, MTL und Texturen wählen', true); return; }
+  if (!state.model) return;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', new URL(`models/${state.model.id}/obj`, API));
+  showLoader(true, 'OBJ-Ansicht wird importiert');
+  setLoaderProgress(0.1, 'OBJ, MTL und Texturen werden gelesen');
+  xhr.upload.onprogress = e => { if (e.lengthComputable) setLoaderProgress(.1 + e.loaded / e.total * .5, `${(e.loaded / 1048576).toFixed(1)} MB`); };
+  xhr.onload = async () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      try {
+        setLoaderProgress(.9, 'Zimmer werden neu zugeordnet');
+        await loadModels();
+        await openModel(state.models.find(m => m.id === state.model.id) || state.model);
+        toast('OBJ-Ansicht importiert');
+      } catch (err) { hideLoader(); toast(err.message, true); }
+    } else {
+      hideLoader();
+      toast('OBJ-Import fehlgeschlagen: ' + (xhr.responseText || xhr.statusText), true);
+    }
+  };
+  xhr.onerror = () => { hideLoader(); toast('Netzwerkfehler beim OBJ-Upload', true); };
+  xhr.send(fd);
 }
 
 function pickFile() { els.fileInput.click(); }

@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.1';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.3.2';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -261,6 +261,8 @@ export class Viewer {
     this._applyVisibility();
     await Promise.allSettled(this._pendingLoads);
     if (this.disposed) return;
+    if (sceneData.obj) await this._loadObjVisual(sceneData.obj);
+    if (this.disposed) return;
     this._applyStates();
     this.setView(this.options.initialView || 'iso', false);
     this.setScope({ ...this.scope, mode: 'home', level: this.levelId, focus: 'none', allLevels: false });
@@ -272,6 +274,9 @@ export class Viewer {
 
   _clearScene() {
     for (const group of this.levelGroups.values()) this.root.remove(group);
+    if (this.objRoot) this.root.remove(this.objRoot);
+    this.objRoot = null;
+    this.objVisual = false;
     for (const label of this.roomLabels) label.remove();
     this.levelGroups.clear();
     this.roomMeshes = [];
@@ -279,6 +284,9 @@ export class Viewer {
     this.wallGroups = [];
     this.slabs = [];
     this.objectGroups.clear();
+    this.objGroups = new Map();
+    this.objVisual = false;
+    this.objRoot = null;
     for (const btn of this.floatButtons.values()) btn.el.remove();
     this.floatButtons.clear();
     this.outline?.parent && this.outline.parent.remove(this.outline);
@@ -801,6 +809,103 @@ export class Viewer {
     this._applyStates();
   }
 
+  async _loadObjVisual(info) {
+    this.objGroups = new Map();
+    this.objVisual = false;
+    const base = this.modelBase + (info.base || '');
+    const objName = String(info.objFile || '').split('/').pop();
+    const mtlName = info.mtlFile ? String(info.mtlFile).split('/').pop() : null;
+    const loadObj = (materials) => new Promise((resolve, reject) => {
+      const loader = new OBJLoader();
+      loader.setPath(base);
+      if (materials) loader.setMaterials(materials);
+      loader.load(objName, resolve, undefined, reject);
+    });
+    try {
+      let materials = null;
+      if (mtlName) {
+        materials = await new Promise((resolve, reject) => {
+          const mtl = new MTLLoader();
+          mtl.setPath(base);
+          mtl.load(mtlName, (m) => { try { m.preload(); } catch {} resolve(m); }, undefined, reject);
+        });
+      }
+      const group = await loadObj(materials);
+      const root = new THREE.Group();
+      root.scale.set(S, S, S);
+      root.position.set(-this.cx * S, 0, -this.cy * S);
+      const metaByName = new Map((info.groups || []).map(g => [g.name, g]));
+      const all = [];
+      group.traverse(n => {
+        if (!n.isMesh) return;
+        n.castShadow = true;
+        n.receiveShadow = true;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        for (const m of mats) {
+          if (!m) continue;
+          m.side = THREE.DoubleSide;
+          if (m.map) {
+            m.map.colorSpace = THREE.SRGBColorSpace;
+            m.map.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+          }
+        }
+        all.push(n);
+      });
+      // OBJ group names are preserved on the created mesh. If not, match by
+      // the parent group's name.
+      for (const mesh of all) {
+        let name = mesh.name || mesh.parent?.name || '';
+        let meta = metaByName.get(name);
+        if (!meta) {
+          const parentName = mesh.parent?.name || '';
+          meta = metaByName.get(parentName);
+        }
+        if (!meta) {
+          const box = new THREE.Box3().setFromObject(mesh);
+          const c = box.getCenter(new THREE.Vector3());
+          let best = null, bestD = Infinity;
+          for (const g of info.groups || []) {
+            const dx = g.center[0] - c.x, dz = g.center[2] - c.z;
+            const d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = g; }
+          }
+          meta = best;
+        }
+        if (meta) {
+          mesh.userData.objGroup = meta.name;
+          mesh.userData.kind = meta.kind;
+          mesh.userData.room = meta.room;
+          mesh.userData.level = meta.level;
+          if (!this.objGroups.has(meta.name)) this.objGroups.set(meta.name, { meta, meshes: [] });
+          this.objGroups.get(meta.name).meshes.push(mesh);
+        }
+        root.add(mesh);
+      }
+      this.objRoot = root;
+      this.root.add(root);
+      this.objVisual = true;
+      // Hide the procedurally rendered SH3D visual, but keep its invisible
+      // hit boxes, room pickers and status effects.
+      for (const wrapper of this.objectGroups.values()) {
+        if (wrapper.userData.model) wrapper.userData.model.visible = false;
+      }
+      for (const w of this.wallGroups) w.mesh.visible = false;
+      for (const { mesh, ceiling } of this.roomMeshes) {
+        if (ceiling) { mesh.visible = false; }
+        else {
+          mesh.visible = true;
+          mesh.material.transparent = true;
+          mesh.material.opacity = 0;
+          mesh.material.depthWrite = false;
+        }
+      }
+      this._applyVisibility();
+    } catch (err) {
+      console.warn('OBJ visual could not be loaded', err);
+      (window.__modelErrors ||= []).push('OBJ: ' + err);
+    }
+  }
+
   _applyStates() {
     if (!this.sceneData) return;
     for (const obj of this.sceneData.objects) {
@@ -1002,6 +1107,7 @@ export class Viewer {
 
   _applyVisibility() {
     if (!this.sceneData) return;
+    if (this.objVisual) { this._applyObjVisibility(); return; }
     const activeLevels = this._activeLevels();
     for (const [id, group] of this.levelGroups) group.visible = activeLevels.has(id);
     const roomScope = this.scope.mode === 'room' || (this.scope.focus !== 'none' && this.scope.room);
@@ -1058,6 +1164,68 @@ export class Viewer {
     }
     for (const { object, room } of this.roomLabels) {
       object.visible = activeLevels.has(room.level) && (!roomScope || !targetRoom || room.id === targetRoom);
+    }
+    this._updateOutline();
+    this.updateFloatPositions();
+  }
+
+  _applyObjVisibility() {
+    const activeLevels = this._activeLevels();
+    for (const [id, group] of this.levelGroups) group.visible = activeLevels.has(id);
+    const roomScope = this.scope.mode === 'room' || (this.scope.focus !== 'none' && this.scope.room);
+    const targetRoom = this.scope.room;
+    for (const { mesh, room, level, ceiling } of this.roomMeshes) {
+      if (ceiling) { mesh.visible = false; continue; }
+      mesh.visible = activeLevels.has(level);
+      mesh.material.transparent = true;
+      mesh.material.opacity = 0;
+      mesh.material.depthWrite = false;
+    }
+    for (const obj of this.sceneData.objects) {
+      const wrapper = this.objectGroups.get(obj.id);
+      if (!wrapper) continue;
+      let visible = activeLevels.has(obj.level);
+      if (roomScope && targetRoom && obj.room !== targetRoom) {
+        if (this.scope.focus === 'isolate') visible = false;
+      }
+      wrapper.visible = visible;
+      if (wrapper.userData.model) wrapper.userData.model.visible = false;
+      const btn = this.floatButtons.get(obj.id);
+      if (btn && !visible) btn.el.classList.add('is-hidden');
+    }
+    for (const { object, room } of this.roomLabels) {
+      object.visible = activeLevels.has(room.level) && (!roomScope || !targetRoom || room.id === targetRoom);
+    }
+    for (const { meta, meshes } of this.objGroups.values()) {
+      let visible = activeLevels.has(meta.level);
+      if (roomScope && targetRoom && meta.room !== targetRoom) {
+        if (this.scope.focus === 'isolate') visible = false;
+        else if (this.scope.focus === 'dim') {
+          for (const mesh of meshes) {
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const m of mats) { m.transparent = true; m.opacity = 0.12; }
+          }
+        }
+      }
+      if (meta.kind === 'floor' && !this.showFloors) visible = false;
+      if (meta.kind === 'ceiling' && !this.config?.scene?.showCeilings) visible = false;
+      if (meta.kind === 'wall' && this.wallMode === 'hidden') visible = false;
+      for (const mesh of meshes) {
+        mesh.visible = visible;
+        if (!visible) continue;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if (meta.kind === 'wall') {
+            const base = this.wallMode === 'transparent' ? 0.24 : 1;
+            m.transparent = base < 1;
+            m.opacity = base;
+            m.depthWrite = base >= 1;
+            m.needsUpdate = true;
+          } else if (roomScope && targetRoom && meta.room !== targetRoom && this.scope.focus !== 'dim') {
+            m.transparent = true; m.opacity = 0.12;
+          }
+        }
+      }
     }
     this._updateOutline();
     this.updateFloatPositions();

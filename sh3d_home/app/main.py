@@ -18,6 +18,7 @@ from typing import Any
 from aiohttp import web
 
 from . import sh3d
+from . import obj_import
 from .ha_bridge import HABridge
 
 _LOGGER = logging.getLogger("sh3d")
@@ -235,7 +236,7 @@ async def health(request: web.Request) -> web.Response:
         "ok": True,
         "ha": {"connected": BRIDGE.connected, "error": BRIDGE.last_error},
         "models": len(STORE.models),
-        "version": os.environ.get("SH3D_VERSION", "0.3.1"),
+        "version": os.environ.get("SH3D_VERSION", "0.3.2"),
     })
 
 
@@ -319,6 +320,63 @@ async def api_thumb(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(path, headers={"Cache-Control": "public, max-age=300"})
 
 
+
+async def api_attach_obj(request: web.Request) -> web.Response:
+    model_id = validate_model_id(request.match_info["model_id"])
+    if model_id not in STORE.models:
+        raise web.HTTPNotFound(text="Modell nicht gefunden")
+    reader = await request.multipart()
+    temp_dir = Path(tempfile.mkdtemp(prefix="sh3d-obj-"))
+    temp_path: Path | None = None
+    display_name = None
+    try:
+        async for field in reader:
+            if field.name == "name":
+                display_name = (await field.text()).strip() or None
+            elif field.name == "file":
+                filename = Path(field.filename or "model.zip").name
+                if not filename.lower().endswith(".zip"):
+                    raise web.HTTPBadRequest(text="Bitte ein ZIP mit OBJ, MTL und Texturen wählen")
+                temp_path = temp_dir / "obj.zip"
+                with temp_path.open("wb") as out:
+                    while True:
+                        chunk = await field.read_chunk(1024 * 512)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+            else:
+                await field.release()
+        if not temp_path:
+            raise web.HTTPBadRequest(text="Keine ZIP-Datei empfangen")
+        folder = MODELS_DIR / model_id
+        scene_path = folder / "scene.json"
+        if not scene_path.exists():
+            raise web.HTTPNotFound(text="Szene nicht gefunden")
+        scene = json.loads(scene_path.read_text())
+        try:
+            obj = await asyncio.to_thread(obj_import.import_obj_zip, temp_path, folder, scene, display_name)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+        obj["importedAt"] = now_iso()
+        scene["obj"] = obj
+        b = obj["bounds"]
+        scene["bounds"] = {
+            "minX": b.get("minX", 0), "maxX": b.get("maxX", 0),
+            "minY": b.get("minZ", 0), "maxY": b.get("maxZ", 0),
+            "width": b.get("width", 0), "depth": b.get("depth", 0),
+        }
+        text = json.dumps(scene, ensure_ascii=False)
+        scene_path.write_text(text)
+        STORE.scene_cache[model_id] = scene
+        meta = STORE.models[model_id]
+        meta["obj"] = {"objFile": obj["objFile"], "mtlFile": obj["mtlFile"], "groups": len(obj["groups"]), "objects": len(obj["objects"]), "importedAt": obj["importedAt"]}
+        meta["bounds"] = obj["bounds"]
+        STORE.write_meta(model_id, meta)
+        return json_response({"ok": True, "obj": {k: obj.get(k) for k in ("objFile", "mtlFile", "groups", "objects", "bounds")}})
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 async def api_upload(request: web.Request) -> web.Response:
     if request.content_length and request.content_length > MAX_UPLOAD + 1_000_000:
         raise web.HTTPRequestEntityTooLarge(max_size=MAX_UPLOAD, actual_size=request.content_length)
@@ -400,7 +458,7 @@ async def api_states(request: web.Request) -> web.Response:
 
 
 async def api_card(request: web.Request) -> web.Response:
-    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.3.1"})
+    return json_response({"ok": True, "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.3.2"})
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -470,7 +528,7 @@ def write_card() -> None:
         # A tiny stable JSON file lets a user manually wire a card URL if the
         # automatic resource registration is unavailable (YAML mode).
         info = {
-            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.3.1",
+            "resource": "/local/sh3d-home/sh3d-home-card.js?v=0.3.2",
             "panel": "SH3D Home",
             "generated": now_iso(),
         }
@@ -480,7 +538,7 @@ def write_card() -> None:
 
 
 async def register_resource() -> None:
-    url = "/local/sh3d-home/sh3d-home-card.js?v=0.3.1"
+    url = "/local/sh3d-home/sh3d-home-card.js?v=0.3.2"
     for attempt in range(30):
         if BRIDGE.connected:
             try:
@@ -558,6 +616,7 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/models/{model_id}", api_delete_model)
     app.router.add_get("/api/models/{model_id}/assets/{path:.*}", api_assets)
     app.router.add_post("/api/models", api_upload)
+    app.router.add_post("/api/models/{model_id}/obj", api_attach_obj)
     app.router.add_post("/api/import/scan", api_scan)
     app.router.add_get("/api/entities", api_entities)
     app.router.add_get("/api/states", api_states)
