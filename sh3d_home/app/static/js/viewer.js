@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.2';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.3';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -570,10 +570,21 @@ export class Viewer {
       mat.side = THREE.DoubleSide;
     }
     if (obj.kind === 'window') {
-      mat.transparent = true;
-      mat.opacity = Math.min(mat.opacity ?? 1, 0.72);
-      mat.side = THREE.DoubleSide;
-      mat.depthWrite = false;
+      const name = String(mat.name || '').toLowerCase();
+      const isGlass = /glass|vitre|verre|transparent|glazing/.test(name);
+      if (isGlass || !mat.map) {
+        mat.color?.set(isGlass ? '#b6dce4' : '#e5e0d5');
+        mat.roughness = isGlass ? 0.12 : 0.62;
+        mat.metalness = isGlass ? 0.05 : 0.02;
+        mat.transparent = true;
+        mat.opacity = isGlass ? 0.34 : 1;
+        mat.depthWrite = !isGlass;
+        mat.side = THREE.DoubleSide;
+      } else {
+        mat.transparent = true;
+        mat.opacity = Math.min(mat.opacity ?? 1, 0.78);
+        mat.side = THREE.DoubleSide;
+      }
     }
     if (obj.kind === 'light') {
       mat.emissive = new THREE.Color(obj.color || '#e8c98f');
