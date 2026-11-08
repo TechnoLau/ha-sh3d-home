@@ -44,6 +44,20 @@ class Sh3dHomeCard extends HTMLElement {
     if (frame) frame.style.height = this._height() + 'px';
   }
 
+  async _createSession() {
+    if (!this._hass?.callWS) throw new Error('Home Assistant API nicht verfügbar');
+    const response = await this._hass.callWS({
+      type: 'supervisor/api',
+      endpoint: '/ingress/session',
+      method: 'post',
+    });
+    if (!response?.session) throw new Error('Keine Ingress-Sitzung erhalten');
+    document.cookie = `ingress_session=${response.session};path=/api/hassio_ingress/;SameSite=Strict${
+      location.protocol === 'https:' ? ';Secure' : ''
+    }`;
+    return response.session;
+  }
+
   _params(base) {
     const c = this._config;
     const url = new URL(base, window.location.origin);
@@ -95,6 +109,7 @@ class Sh3dHomeCard extends HTMLElement {
       });
       const ingress = info?.ingress_url || info?.ingress_entry;
       if (!ingress) throw new Error('Kein Ingress-Pfad für SH3D Home gefunden');
+      await this._createSession();
       const src = this._params(ingress.endsWith('/') ? ingress : ingress + '/');
       const full = new URL(this._params((ingress.endsWith('/') ? ingress : ingress + '/')));
       full.searchParams.delete('embed');

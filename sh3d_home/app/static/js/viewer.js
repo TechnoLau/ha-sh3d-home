@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.1.5';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.1.6';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
