@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.0';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.1';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -353,6 +353,7 @@ export class Viewer {
     this.objRoot = null;
     this.objRoomLevels = new Set();
     this.objFloorLevels = new Set();
+    this.syntheticFloors = [];
     for (const btn of this.floatButtons.values()) btn.el.remove();
     this.floatButtons.clear();
     this.outline?.parent && this.outline.parent.remove(this.outline);
@@ -969,6 +970,23 @@ export class Viewer {
           mesh.material.depthWrite = false;
         }
       }
+      // The OBJ exporter has no floor polygons for upper storeys. Build a
+      // matching floor from the SH3D room polygon so rooms don't float.
+      for (const room of this.sceneData.rooms) {
+        if (this.objFloorLevels.has(room.level)) continue;
+        const shape = new THREE.Shape(room.points.map(p => new THREE.Vector2(this._wx(p[0]), this._wz(p[1]))));
+        const geom = new THREE.ShapeGeometry(shape);
+        const mat = new THREE.MeshStandardMaterial({ color: '#8f6f4f', roughness: .86, metalness: .01 });
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.y = this._levelY(room.level) + 0.012;
+        mesh.receiveShadow = true;
+        mesh.userData.kind = 'floor';
+        mesh.userData.room = room.id;
+        mesh.userData.level = room.level;
+        this.root.add(mesh);
+        this.syntheticFloors.push({ mesh, room: room.id, level: room.level });
+      }
       this._applyVisibility();
     } catch (err) {
       console.warn('OBJ visual could not be loaded', err);
@@ -1252,11 +1270,14 @@ export class Viewer {
     for (const { mesh, room, level, ceiling } of this.roomMeshes) {
       if (ceiling) { mesh.visible = false; continue; }
       const inRoom = !roomScope || !targetRoom || room === targetRoom;
-      if (!this.objFloorLevels.has(level)) { mesh.visible = inRoom && this.showFloors && activeLevels.has(level); continue; }
+      if (!this.objFloorLevels.has(level)) { mesh.visible = inRoom && activeLevels.has(level); continue; }
       mesh.visible = inRoom && activeLevels.has(level);
       mesh.material.transparent = true;
       mesh.material.opacity = 0;
       mesh.material.depthWrite = false;
+    }
+    for (const floor of this.syntheticFloors) {
+      floor.mesh.visible = activeLevels.has(floor.level) && (!roomScope || !targetRoom || floor.room === targetRoom);
     }
     for (const w of this.wallGroups) {
       if (!this.objRoomLevels.has(w.level)) {
