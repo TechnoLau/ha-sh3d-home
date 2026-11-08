@@ -96,11 +96,11 @@ class Sh3dHomeCard extends HTMLElement {
       const ingress = info?.ingress_url || info?.ingress_entry;
       if (!ingress) throw new Error('Kein Ingress-Pfad für SH3D Home gefunden');
       const src = this._params(ingress.endsWith('/') ? ingress : ingress + '/');
-      const full = this._params((ingress.endsWith('/') ? ingress : ingress + '/'));
+      const full = new URL(this._params((ingress.endsWith('/') ? ingress : ingress + '/')));
       full.searchParams.delete('embed');
       const wrap = this.shadowRoot.querySelector('.wrap');
       if (!wrap) return;
-      wrap.innerHTML = `<iframe class="frame" title="SH3D Home 3D-Modell" src="${src}" allow="fullscreen" loading="lazy"></iframe><a class="open" href="${full}" target="_blank" rel="noopener">Öffnen ↗</a>`;
+      wrap.innerHTML = `<iframe class="frame" title="SH3D Home 3D-Modell" src="${src}" allow="fullscreen" loading="lazy"></iframe><a class="open" href="${full.toString()}" target="_blank" rel="noopener">Öffnen ↗</a>`;
       const frame = wrap.querySelector('iframe');
       frame.addEventListener('load', () => { try { frame.contentWindow.focus(); } catch {} });
     } catch (err) {

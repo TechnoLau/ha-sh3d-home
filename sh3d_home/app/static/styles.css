@@ -526,3 +526,6 @@ body.embed .walk-pad { bottom: 72px; }
 .filter-row { flex-wrap: wrap; overflow: visible; }
 
 .stage.is-drop::before { content: "SH3D-Datei hier ablegen"; position: absolute; inset: 18px; z-index: 50; border: 2px dashed var(--accent); border-radius: 16px; background: rgba(250,247,240,.85); color: var(--accent-deep); display: grid; place-items: center; font: 600 15px var(--font); pointer-events: none; }
+
+body.walking .sidebar { flex-basis: 0; width: 0; border-right: 0; overflow: hidden; }
+body.walking .labels { display: none; }
