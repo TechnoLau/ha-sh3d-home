@@ -529,3 +529,27 @@ body.embed .walk-pad { bottom: 72px; }
 
 body.walking .sidebar { flex-basis: 0; width: 0; border-right: 0; overflow: hidden; }
 body.walking .labels { display: none; }
+
+/* room-only dashboard card */
+body.transparent,
+body.transparent .shell,
+body.transparent .stage,
+body.transparent #viewport { background: transparent !important; }
+body.transparent .stage::after { display: none; }
+body.transparent .site-disc { display: none; }
+body.room-only .sidebar { display: none; }
+body.room-only .stage-top,
+body.room-only .floor-float,
+body.room-only .stage-status,
+body.room-only .walk-hint,
+body.room-only .labels { display: none !important; }
+body.room-only .stage { background: transparent !important; }
+body.room-only .stage::after { display: none; }
+body.room-only .inspector { display: none !important; }
+body.room-only .floating { z-index: 12; }
+body.room-only .float-btn { background: rgba(252,249,242,.96); }
+body.room-only .modal { width: 430px; }
+body.room-only .overlay { background: transparent; backdrop-filter: none; align-items: flex-end; padding: 12px; }
+body.room-only .overlay .modal { margin: 0 auto; }
+
+@media (max-width: 520px) { #btnWalls, #btnFloors, #btnRotate { display: none; } }

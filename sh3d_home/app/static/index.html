@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f3eee4">
   <title>SH3D Home</title>
-  <link rel="stylesheet" href="static/styles.css?v=0.1.7">
+  <link rel="stylesheet" href="static/styles.css?v=0.2.0">
   <script>
     window.__errs = [];
     window.addEventListener('error', e => window.__errs.push(String(e.message || e.error || e)));
@@ -124,6 +124,8 @@
         <button data-view="walk" title="Im Haus gehen"><svg><use href="#i-walk"/></svg><span>Gehen</span></button>
       </div>
       <div class="stage-actions">
+        <button class="icon-btn" id="btnWalls" title="Wände: sichtbar"><svg><use href="#i-eye"/></svg></button>
+        <button class="icon-btn" id="btnFloors" title="Böden ausblenden"><svg><use href="#i-layers"/></svg></button>
         <button class="icon-btn" id="btnRotate" title="Sanft drehen"><svg><use href="#i-bolt"/></svg></button>
         <button class="icon-btn" id="btnFullscreen" title="Vollbild"><svg><use href="#i-full"/></svg></button>
         <button class="icon-btn edit-toggle is-live" id="btnEditMode" title="Bearbeiten / Live"><svg><use href="#i-edit"/></svg><span>Live</span></button>
@@ -180,6 +182,6 @@
 </div>
 
 <input type="file" id="fileInput" accept=".sh3d,application/zip" hidden>
-<script type="module" src="static/js/app.js?v=0.1.7"></script>
+<script type="module" src="static/js/app.js?v=0.2.0"></script>
 </body>
 </html>

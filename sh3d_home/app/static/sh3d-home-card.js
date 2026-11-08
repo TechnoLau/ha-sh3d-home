@@ -85,8 +85,15 @@ class Sh3dHomeCard extends HTMLElement {
     url.searchParams.set('focus', c.focus || 'dim');
     url.searchParams.set('view', c.view || 'iso');
     if (c.chrome === false) url.searchParams.set('chrome', '0');
+    if (c.mode === 'room') {
+      url.searchParams.set('transparent', '1');
+      url.searchParams.set('labels', '0');
+      url.searchParams.set('chrome', '0');
+    }
+    if (c.labels === false) url.searchParams.set('labels', '0');
     if (c.theme === 'night') url.searchParams.set('theme', 'night');
     if (c.all_levels) url.searchParams.set('all', '1');
+    if (c.stack_levels === false) url.searchParams.set('stack', '0');
     if (c.rotate) url.searchParams.set('rotate', '1');
     return url.toString();
   }
@@ -94,17 +101,20 @@ class Sh3dHomeCard extends HTMLElement {
   async _render() {
     this._rendered = true;
     const height = this._height();
+    const roomOnly = (this._config.mode || 'home') === 'room';
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
+        .room-card { background: transparent !important; }
         .wrap { position: relative; border-radius: var(--ha-card-border-radius, 12px); overflow: hidden; background: #e7e1d5; }
+        .wrap.room-card { background: transparent !important; }
         .frame { width: 100%; height: ${height}px; border: 0; display: block; background: #e7e1d5; }
         .loading, .error { height: ${height}px; display: grid; place-items: center; color: #6f685c; font: 13px/1.5 system-ui, sans-serif; text-align: center; padding: 20px; box-sizing: border-box; }
         .error a { color: #c45a3c; }
         .open { position: absolute; right: 10px; top: 10px; background: rgba(250,247,240,.9); border: 1px solid rgba(100,88,70,.25); color: #3b352c; border-radius: 7px; padding: 4px 8px; font: 10px/1.4 system-ui, sans-serif; text-decoration: none; backdrop-filter: blur(5px); }
         .open:hover { background: #fffdf8; }
       </style>
-      <div class="wrap"><div class="loading">SH3D Home wird geladen …</div></div>`;
+      <div class="wrap ${roomOnly ? 'room-card' : ''}"><div class="loading">SH3D Home wird geladen …</div></div>`;
     if (!this._hass) return;
     try {
       if (typeof this._hass.callWS !== 'function') throw new Error('Home Assistant API nicht verfügbar');
@@ -131,7 +141,7 @@ class Sh3dHomeCard extends HTMLElement {
       full.searchParams.delete('embed');
       const wrap = this.shadowRoot.querySelector('.wrap');
       if (!wrap) return;
-      wrap.innerHTML = `<iframe class="frame" title="SH3D Home 3D-Modell" src="${src}" allow="fullscreen" loading="lazy"></iframe><a class="open" href="${full.toString()}" target="_blank" rel="noopener">Öffnen ↗</a>`;
+      wrap.innerHTML = `<iframe class="frame" title="SH3D Home 3D-Modell" src="${src}" allow="fullscreen" loading="lazy" style="background:${roomOnly ? 'transparent' : '#e7e1d5'}"></iframe>${roomOnly ? '' : `<a class="open" href="${full.toString()}" target="_blank" rel="noopener">Öffnen ↗</a>`}`;
       const frame = wrap.querySelector('iframe');
       frame.addEventListener('load', () => { try { frame.contentWindow.focus(); } catch {} });
     } catch (err) {

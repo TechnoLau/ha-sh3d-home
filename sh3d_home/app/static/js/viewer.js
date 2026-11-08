@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.1.7';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.2.0';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -54,7 +54,12 @@ export class Viewer {
     this.modelBase = '';
     this.levelId = null;
     this.mode = 'edit';
-    this.scope = { mode: 'home', level: null, room: null, focus: 'dim', allLevels: false };
+    this.scope = { mode: 'home', level: null, room: null, focus: 'dim', allLevels: false, stackLevels: true };
+    this.wallMode = 'solid';
+    this.showFloors = true;
+    this.transparent = false;
+    this.roomOnly = false;
+    this.localOn = new Set();
     this.selectedId = null;
     this.hoveredId = null;
     this.loaded = 0;
@@ -73,7 +78,7 @@ export class Viewer {
     this._frame = 0;
     this._clock = new THREE.Clock();
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -81,6 +86,7 @@ export class Viewer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setClearColor('#e7e1d5', 1);
+    this.renderer.setClearAlpha(1);
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#e7e1d5');
@@ -209,9 +215,10 @@ export class Viewer {
 
   setTheme(night = false) {
     const bg = night ? '#141718' : '#e7e1d5';
-    this.scene.background = new THREE.Color(bg);
-    this.scene.fog = new THREE.Fog(bg, 28, 62);
-    this.renderer.setClearColor(bg, 1);
+    this.scene.background = this.transparent ? null : new THREE.Color(bg);
+    this.scene.fog = this.transparent ? null : new THREE.Fog(bg, 28, 62);
+    this.renderer.setClearColor(bg, this.transparent ? 0 : 1);
+    this.renderer.setClearAlpha(this.transparent ? 0 : 1);
     this.hemi.intensity = night ? 0.9 : 1.55;
     this.ambient.intensity = night ? 0.22 : 0.38;
     this.sun.intensity = night ? 1.15 : 2.25;
@@ -228,6 +235,10 @@ export class Viewer {
     this.modelBase = modelBase || '';
     this.states = {};
     this.mappings = config?.mappings || {};
+    this.wallMode = this.config?.scene?.wallMode || 'solid';
+    this.showFloors = this.config?.scene?.showFloors !== false;
+    this.scope.stackLevels = this.config?.scene?.stackLevels !== false;
+    this.localOn.clear();
     this.sceneData = sceneData;
     this.cx = (sceneData.bounds.minX + sceneData.bounds.maxX) / 2;
     this.cy = (sceneData.bounds.minY + sceneData.bounds.maxY) / 2;
@@ -240,6 +251,7 @@ export class Viewer {
     this._buildLevels();
     this._buildRooms();
     this._buildWalls();
+    this.setLabels(this.config?.scene?.showLabels !== false);
     this._pendingLoads = [];
     this._buildObjects();
     this._buildOutline();
@@ -349,8 +361,6 @@ export class Viewer {
   }
 
   _buildWalls() {
-    const mat = new THREE.MeshStandardMaterial({ color: '#e9e0d1', roughness: 0.93, metalness: 0.01 });
-    const matSide = new THREE.MeshStandardMaterial({ color: '#ded3c2', roughness: 0.95 });
     for (const piece of this.sceneData.walls) {
       const lg = this.levelGroups.get(piece.level);
       if (!lg) continue;
@@ -359,18 +369,47 @@ export class Viewer {
       const h = Math.max(0.02, (piece.z1 - piece.z0) * S);
       if (len < 0.01 || h < 0.01) continue;
       const geom = new THREE.BoxGeometry(len, h, Math.max(0.025, piece.thickness * S));
-      const mesh = new THREE.Mesh(geom, piece.kind === 'lintel' ? matSide : mat);
+      const material = new THREE.MeshStandardMaterial({
+        color: piece.kind === 'lintel' ? '#ded3c2' : '#e9e0d1',
+        roughness: 0.93, metalness: 0.01,
+      });
+      material.userData.__baseOpacity = 1;
+      const mesh = new THREE.Mesh(geom, material);
       mesh.position.set((x1 + x2) / 2, this._levelY(piece.level) + (piece.z0 + piece.z1) / 2 * S, (z1 + z2) / 2);
       mesh.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       const midX = (piece.x1 + piece.x2) / 2, midY = (piece.y1 + piece.y2) / 2;
+      const rooms = new Set();
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12;
+        const r = this._roomAt(piece.x1 + (piece.x2 - piece.x1) * t, piece.y1 + (piece.y2 - piece.y1) * t, piece.level);
+        if (r) rooms.add(r);
+      }
+      // Walls on the boundary often have a midpoint just outside the polygon.
+      for (const room of this.sceneData.rooms.filter(r => r.level === piece.level)) {
+        const d = this._distToPoly(midX, midY, room.points);
+        if (d < Math.max(55, piece.thickness * 1.2)) rooms.add(room.id);
+      }
       mesh.userData.kind = 'wall';
       mesh.userData.room = this._roomAt(midX, midY, piece.level);
+      mesh.userData.rooms = [...rooms];
       mesh.userData.level = piece.level;
       lg.add(mesh);
-      this.wallGroups.push({ mesh, room: mesh.userData.room, level: piece.level });
+      this.wallGroups.push({ mesh, room: mesh.userData.room, rooms: [...rooms], level: piece.level });
     }
+    this.setWallMode(this.wallMode);
+  }
+
+  _distToPoly(x, y, points) {
+    let best = Infinity;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const [x1, y1] = points[j], [x2, y2] = points[i];
+      const dx = x2 - x1, dy = y2 - y1;
+      const t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / ((dx * dx + dy * dy) || 1)));
+      best = Math.min(best, Math.hypot(x - (x1 + dx * t), y - (y1 + dy * t)));
+    }
+    return best;
   }
 
   _buildObjects() {
@@ -408,10 +447,21 @@ export class Viewer {
     wrapper.add(glow);
     wrapper.userData.glow = glow;
     if (kind === 'light') {
-      const pl = new THREE.PointLight('#ffd39a', 0, 5.2, 2);
+      const pl = new THREE.PointLight('#ffd39a', 0, 8, 1.7);
       pl.position.y = obj.height * S * 0.52;
       wrapper.add(pl);
       wrapper.userData.point = pl;
+      const poolMat = new THREE.SpriteMaterial({
+        map: canvasGlow('#ffd39a'), transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const pool = new THREE.Sprite(poolMat);
+      const poolSize = Math.max(1.4, Math.min(5.5, obj.width * S * 3.2));
+      pool.scale.set(poolSize, poolSize * .72, 1);
+      pool.position.y = -obj.elevation * S + 0.02;
+      pool.renderOrder = 2;
+      wrapper.add(pool);
+      wrapper.userData.pool = pool;
     }
     if (kind === 'display' || kind === 'computer') {
       const screenMat = new THREE.MeshBasicMaterial({ color: '#93ccff', transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -490,6 +540,16 @@ export class Viewer {
       mat.color?.set(FALLBACK[obj.kind] || FALLBACK.furniture);
       mat.roughness = obj.kind === 'display' ? 0.54 : 0.72;
       mat.metalness = obj.kind === 'light' ? 0.18 : 0.05;
+      mat.side = THREE.DoubleSide;
+    } else if (!mat.map && mat.color && ['light', 'window', 'door', 'speaker', 'display'].includes(obj.kind)) {
+      // Some catalog MTLs use a black base color without an embedded texture.
+      if (mat.color.getHex() < 0x101010) mat.color.set(FALLBACK[obj.kind] || FALLBACK.furniture);
+    }
+    if (mat.map) {
+      mat.map.colorSpace = THREE.SRGBColorSpace;
+      mat.map.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    }
+    if (obj.mirrored || ['door', 'window', 'light', 'speaker', 'display'].includes(obj.kind)) {
       mat.side = THREE.DoubleSide;
     }
     if (obj.kind === 'window') {
@@ -598,7 +658,8 @@ export class Viewer {
 
   _loadObjWithoutMtl(loader, url, onObj, reject, originalErr) {
     console.warn('MTL failed, trying OBJ only', originalErr);
-    loader.load(url, onObj, undefined, reject);
+    const path = url.split('/assets/')[1] || url;
+    loader.load(path, onObj, undefined, reject);
   }
 
   _modelProgress() {
@@ -668,32 +729,45 @@ export class Viewer {
       if (!wrapper) continue;
       const vs = visualState(mapping ? { ...mapping, kind: obj.kind } : { kind: obj.kind }, this.states);
       const mapped = !!mapping?.entity_id;
-      this._applyVisual(obj, wrapper, vs, mapped);
+      const local = !mapped && this.localOn.has(obj.id);
+      if (local) {
+        vs.on = true;
+        vs.brightness = 230;
+        vs.color = vs.color || obj.color || '#ffd39a';
+        vs.screen = ['display', 'computer'].includes(obj.kind);
+        vs.open = ['door', 'window'].includes(obj.kind);
+      }
+      this._applyVisual(obj, wrapper, vs, mapped, local);
       const btn = this.floatButtons.get(obj.id);
       if (btn) this._updateFloat(btn, obj, mapping, vs);
     }
     this._applyVisibility();
   }
 
-  _applyVisual(obj, wrapper, vs, mapped) {
+  _applyVisual(obj, wrapper, vs, mapped, local = false) {
     const glow = wrapper.userData.glow;
     const point = wrapper.userData.point;
+    const pool = wrapper.userData.pool;
     const screen = wrapper.userData.screen;
     const pulse = wrapper.userData.pulse;
     const warm = wrapper.userData.warm;
     const arc = wrapper.userData.openArc;
-    const active = mapped && vs.on;
+    const active = (mapped || local) && vs.on;
     const c = cssColor(vs.color || obj.color || (obj.kind === 'display' ? '#9bd6ff' : '#ffd39a'));
     if (glow) {
       glow.material.color.set(c);
-      glow.material.opacity = active ? Math.min(0.78, 0.36 + 0.32 * (vs.brightness / 255)) * (vs.glow ?? 1) : (obj.kind === 'light' && !mapped ? 0.08 : 0);
-      const s = Math.max(.28, Math.min(1.8, obj.width * S * (obj.kind === 'light' ? 1.05 : .8)));
+      glow.material.opacity = active ? Math.min(0.95, 0.52 + 0.4 * (vs.brightness / 255)) * (vs.glow ?? 1) : (obj.kind === 'light' && !mapped ? 0.06 : 0);
+      const s = Math.max(.34, Math.min(2.2, obj.width * S * (obj.kind === 'light' ? 1.45 : .8)));
       glow.scale.set(s, s, 1);
     }
     if (point) {
       point.color.set(c);
-      point.intensity = active ? 0.65 + 1.15 * ((vs.brightness || 0) / 255) : 0;
-      point.distance = Math.max(3.2, obj.height * S * 2.2);
+      point.intensity = active ? 2.2 + 3.4 * ((vs.brightness || 0) / 255) : 0;
+      point.distance = Math.max(4.2, obj.height * S * 3.6);
+    }
+    if (pool) {
+      pool.material.color.set(c);
+      pool.material.opacity = active ? 0.28 + 0.28 * ((vs.brightness || 0) / 255) : 0;
     }
     wrapper.traverse(n => {
       if (!n.isMesh || !n.material || n.material === glow?.material) return;
@@ -703,7 +777,7 @@ export class Viewer {
         const isLight = obj.kind === 'light';
         if (isLight) {
           m.emissive.copy(c);
-          m.emissiveIntensity = vs.on ? 0.28 + 0.75 * (vs.brightness / 255) : 0.03;
+          m.emissiveIntensity = vs.on ? 0.9 + 1.5 * (vs.brightness / 255) : 0.02;
         } else if (obj.kind === 'speaker') {
           m.emissive.copy(c);
           m.emissiveIntensity = vs.on ? 0.12 : 0.0;
@@ -714,19 +788,19 @@ export class Viewer {
       }
     });
     if (screen) {
-      const on = mapped && (vs.screen || (vs.on && (obj.kind === 'display' || obj.kind === 'computer')));
+      const on = active && (vs.screen || (vs.on && (obj.kind === 'display' || obj.kind === 'computer')));
       screen.material.color.set(vs.color || '#93ccff');
-      screen.material.opacity = on ? 0.56 : 0;
+      screen.material.opacity = on ? 0.7 : 0;
     }
     if (pulse) {
-      pulse.material.opacity = active ? 0.25 : 0;
+      pulse.material.opacity = active ? 0.35 : 0;
       pulse.userData.active = active;
     }
     if (warm) {
-      warm.material.opacity = mapped && vs.on ? 0.32 : 0;
+      warm.material.opacity = (mapped || local) && vs.on ? 0.4 : 0;
     }
     if (arc) {
-      arc.material.opacity = mapped && vs.open ? 0.42 : 0;
+      arc.material.opacity = (mapped || local) && vs.open ? 0.5 : 0;
     }
     wrapper.userData.active = active;
     wrapper.userData.vs = vs;
@@ -784,6 +858,7 @@ export class Viewer {
 
   _isInScope(obj) {
     if (!this.levelGroups.get(obj.level)?.visible) return false;
+    if (!this.scope.allLevels && obj.level !== this.levelId) return false;
     if ((this.scope.mode === 'room' || this.scope.focus !== 'none') && this.scope.room) {
       if (this.scope.mode === 'room' && obj.room !== this.scope.room) return false;
     }
@@ -801,39 +876,58 @@ export class Viewer {
     if (scope.fit !== false) this.fitScope();
   }
 
+  _activeLevels() {
+    const current = this.levels.get(this.levelId) || this.sceneData.levels[0];
+    if (this.scope.mode === 'room' && this.scope.room) {
+      const room = this.sceneData.rooms.find(r => r.id === this.scope.room);
+      return new Set([room?.level || current.id]);
+    }
+    if (this.scope.allLevels) return new Set(this.sceneData.levels.map(l => l.id));
+    if (this.scope.stackLevels !== false && current) {
+      return new Set(this.sceneData.levels.filter(l => l.elevation <= current.elevation + 0.1).map(l => l.id));
+    }
+    return new Set([current?.id]);
+  }
+
   _applyVisibility() {
     if (!this.sceneData) return;
-    const activeLevels = this.scope.allLevels ? new Set(this.sceneData.levels.map(l => l.id)) : new Set([this.levelId || this.sceneData.levels[0].id]);
+    const activeLevels = this._activeLevels();
     for (const [id, group] of this.levelGroups) group.visible = activeLevels.has(id);
     const roomScope = this.scope.mode === 'room' || (this.scope.focus !== 'none' && this.scope.room);
     const targetRoom = this.scope.room;
     for (const { mesh, room, level } of this.roomMeshes) {
-      if (!activeLevels.has(level)) continue;
+      if (!activeLevels.has(level)) { mesh.visible = false; continue; }
+      const isCeil = !!mesh.userData.ceiling;
+      if (isCeil) {
+        mesh.visible = this.config?.scene?.showCeilings === true && (!roomScope || !targetRoom || room.id === targetRoom);
+        if (mesh.visible) { mesh.material.transparent = true; mesh.material.opacity = 0.12; }
+        continue;
+      }
+      if (!this.showFloors) { mesh.visible = false; continue; }
       let visible = true;
       if (roomScope && targetRoom) visible = room.id === targetRoom ? true : this.scope.focus === 'dim';
-      if (mesh.userData.ceiling) visible = visible && (this.config?.scene?.showCeilings === true);
       mesh.visible = visible;
       if (!visible) continue;
-      const dim = roomScope && targetRoom && room.id !== targetRoom ? 0.22 : 1;
-      const isCeil = !!mesh.userData.ceiling;
-      if (isCeil) { mesh.material.transparent = true; mesh.material.opacity = 0.12 * dim; }
-      else { mesh.material.opacity = dim; mesh.material.transparent = dim < 1; }
+      const dim = roomScope && targetRoom && room.id !== targetRoom ? 0.18 : 1;
+      mesh.material.opacity = dim;
+      mesh.material.transparent = dim < 1;
     }
-    const hideGlobalSlab = roomScope && !!targetRoom;
+    const hideGlobalSlab = (roomScope && !!targetRoom) || !this.showFloors;
     for (const s of this.slabs) {
       s.mesh.visible = activeLevels.has(s.level) && !hideGlobalSlab;
     }
     for (const w of this.wallGroups) {
-      let visible = activeLevels.has(w.level);
+      let visible = activeLevels.has(w.level) && this.wallMode !== 'hidden';
       let dim = 1;
       if (visible && roomScope && targetRoom) {
-        if (w.room && w.room !== targetRoom) {
+        const belongs = w.room === targetRoom || (w.rooms || []).includes(targetRoom);
+        if (!belongs) {
           if (this.scope.focus === 'isolate') visible = false;
-          else dim = 0.16;
+          else dim = 0.12;
         }
       }
       w.mesh.visible = visible;
-      if (visible) this._dimMesh(w.mesh, dim);
+      if (visible) this._setWallVisual(w.mesh, dim);
     }
     for (const obj of this.sceneData.objects) {
       const wrapper = this.objectGroups.get(obj.id);
@@ -843,7 +937,7 @@ export class Viewer {
       if (visible && roomScope && targetRoom) {
         if (obj.room !== targetRoom) {
           if (this.scope.focus === 'isolate') visible = false;
-          else dim = 0.18;
+          else dim = 0.14;
         }
       }
       wrapper.visible = visible;
@@ -856,6 +950,60 @@ export class Viewer {
     }
     this._updateOutline();
     this.updateFloatPositions();
+  }
+
+  _setWallVisual(mesh, dim = 1) {
+    const m = mesh.material;
+    const base = this.wallMode === 'transparent' ? 0.24 : 1;
+    m.opacity = base * dim;
+    m.transparent = m.opacity < 0.999;
+    m.depthWrite = !m.transparent;
+    m.needsUpdate = true;
+  }
+
+  setWallMode(mode) {
+    this.wallMode = ['solid', 'transparent', 'hidden'].includes(mode) ? mode : 'solid';
+    this._applyVisibility();
+  }
+
+  setFloors(on) {
+    this.showFloors = !!on;
+    this._applyVisibility();
+  }
+
+  setStackLevels(on) {
+    this.scope.stackLevels = !!on;
+    this._applyVisibility();
+    this.fitScope();
+  }
+
+  setTransparent(on) {
+    this.transparent = !!on;
+    const bg = document.body.classList.contains('night') ? '#141718' : '#e7e1d5';
+    this.scene.background = on ? null : new THREE.Color(bg);
+    this.scene.fog = on ? null : new THREE.Fog(bg, 28, 62);
+    this.renderer.setClearAlpha(on ? 0 : 1);
+    this.renderer.setClearColor(bg, on ? 0 : 1);
+    this.ground.visible = !on;
+    this.siteDisc.visible = !on;
+  }
+
+  setZoomOnly(on) {
+    this.zoomOnly = !!on;
+    this.controls.enableRotate = !on;
+    this.controls.enablePan = !on;
+    this.controls.enableZoom = true;
+    if (on) { this.autoRotate = false; this.controls.autoRotate = false; }
+  }
+
+  setRoomOnly(on) {
+    this.roomOnly = !!on;
+  }
+
+  toggleLocal(id) {
+    if (this.localOn.has(id)) this.localOn.delete(id); else this.localOn.add(id);
+    this._applyStates();
+    return this.localOn.has(id);
   }
 
   _dimGroup(group, dim) {
@@ -889,16 +1037,17 @@ export class Viewer {
       const room = this.sceneData.rooms.find(r => r.id === this.scope.room);
       if (room) {
         for (const p of room.points) box.expandByPoint(new THREE.Vector3(this._wx(p[0]), this._levelY(room.level), this._wz(p[1])));
-        box.expandByPoint(new THREE.Vector3(this._wx(room.center[0]), this._levelY(room.level) + (lvl?.height || 250) * S, this._wz(room.center[1])));
+        box.expandByPoint(new THREE.Vector3(this._wx(room.center[0]), this._levelY(room.level) + (this.levels.get(room.level)?.height || 250) * S, this._wz(room.center[1])));
         return box;
       }
     }
-    if (this.scope.allLevels) {
-      for (const l of this.sceneData.levels) {
-        box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.minX), this._levelY(l.id), this._wz(this.sceneData.bounds.minY)));
-        box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.maxX), this._levelY(l.id) + l.height * S, this._wz(this.sceneData.bounds.maxY)));
-      }
-    } else {
+    const active = this._activeLevels();
+    for (const l of this.sceneData.levels) {
+      if (!active.has(l.id)) continue;
+      box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.minX), this._levelY(l.id), this._wz(this.sceneData.bounds.minY)));
+      box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.maxX), this._levelY(l.id) + l.height * S, this._wz(this.sceneData.bounds.maxY)));
+    }
+    if (box.isEmpty()) {
       box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.minX), this._levelY(this.levelId), this._wz(this.sceneData.bounds.minY)));
       box.expandByPoint(new THREE.Vector3(this._wx(this.sceneData.bounds.maxX), this._levelY(this.levelId) + (lvl?.height || 250) * S, this._wz(this.sceneData.bounds.maxY)));
     }
@@ -988,6 +1137,12 @@ export class Viewer {
       const id = h.object.userData?.objectId;
       if (id) return { object: this.sceneData.objects.find(o => o.id === id), group: this.objectGroups.get(id), point: h.point };
     }
+    const floors = this.roomMeshes.filter(x => !x.ceiling && x.mesh.visible).map(x => x.mesh);
+    const roomHits = this.raycaster.intersectObjects(floors, false);
+    if (roomHits.length) {
+      const room = this.sceneData.rooms.find(r => r.id === roomHits[0].object.userData.room);
+      if (room) return { room, point: roomHits[0].point };
+    }
     return null;
   }
 
@@ -1004,7 +1159,7 @@ export class Viewer {
     }
     const hit = this._pick(e.clientX, e.clientY);
     this.pointer.objectId = hit?.object?.id || null;
-    if (hit) {
+    if (hit?.object) {
       this.canvas.style.cursor = 'pointer';
       if (this.pointer.longTimer) clearTimeout(this.pointer.longTimer);
       this.pointer.longTimer = setTimeout(() => {
@@ -1030,7 +1185,7 @@ export class Viewer {
       if (this.pointer.moved > 10 && this.pointer.longTimer) { clearTimeout(this.pointer.longTimer); this.pointer.longTimer = null; }
     } else {
       const hit = this._pick(e.clientX, e.clientY);
-      const id = hit?.object?.id || null;
+      const id = hit?.object?.id || hit?.room?.id || null;
       if (id !== this.hoveredId) {
         this.hoveredId = id;
         this.canvas.style.cursor = id ? 'pointer' : 'grab';
@@ -1046,6 +1201,7 @@ export class Viewer {
     if (this.pointer.moved > 8 || this.pointer.longFired) { this.pointer.longFired = false; return; }
     const hit = this._pick(e.clientX, e.clientY);
     if (hit?.object) this.onObjectClick?.(hit.object, hit.group);
+    else if (hit?.room) this.onRoomClick?.(hit.room);
     else this.onBackgroundClick?.();
   }
 

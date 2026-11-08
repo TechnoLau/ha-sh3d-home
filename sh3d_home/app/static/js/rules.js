@@ -35,7 +35,7 @@ export function emptyMapping() {
   return {
     entity_id: '',
     tap: true,
-    button: true,
+    button: false,
     tap_action: 'toggle',
     label: '',
     rules: [],

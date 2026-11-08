@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.1.7';
+import { Viewer } from './viewer.js?v=0.2.0';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.1.7';
+} from './rules.js?v=0.2.0';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -26,6 +26,9 @@ const state = {
   scopeMode: 'home',
   focus: 'dim',
   allLevels: false,
+  stackLevels: true,
+  transparent: params.get('transparent') === '1',
+  roomOnly: false,
   view: 'iso',
   editMode: true,
   embed: params.get('embed') === '1',
@@ -70,8 +73,9 @@ let viewer = null;
 async function init() {
   document.body.classList.toggle('embed', state.embed);
   document.body.classList.toggle('night', params.get('theme') === 'night');
+  document.body.classList.toggle('transparent', state.transparent);
   if (params.get('chrome') === '0') document.body.classList.add('no-chrome');
-  state.editMode = !state.embed;
+  state.editMode = false;
   updateEditButton();
   bindShell();
   await Promise.all([loadEntities(), loadModels()]);
@@ -158,6 +162,13 @@ async function openModel(model) {
       setLoaderProgress(total ? n / total : 0, `${n} von ${total} Objekten`);
     });
     await viewer.load(scene, state.config, viewer.modelBase);
+    const sc = state.config?.scene || {};
+    viewer.setWallMode(sc.wallMode || 'solid');
+    viewer.setFloors(sc.showFloors !== false);
+    viewer.setLabels(sc.showLabels !== false);
+    viewer.setCeilings(!!sc.showCeilings);
+    viewer.setStackLevels(sc.stackLevels !== false);
+    viewer.setAutoRotate(!!sc.autoRotate);
     hideLoader();
     setEmpty(false);
     applyInitialScope();
@@ -203,7 +214,10 @@ function ensureViewer() {
   viewer.onObjectLongPress = onSceneObjectLongPress;
   viewer.onFloatClick = onFloatClick;
   viewer.onRoomClick = onRoomClick;
-  viewer.onBackgroundClick = () => { if (state.embed) closeModal(); else closeInspector(); };
+  viewer.onBackgroundClick = () => {
+    if (state.roomOnly) { closeModal(); return; }
+    resetFocus();
+  };
   $('#btnExitWalk').addEventListener('click', () => viewer.exitWalk());
 }
 
@@ -222,12 +236,32 @@ function applyInitialScope() {
   state.room = state.scene.rooms.some(r => r.id === qRoom) ? qRoom : (state.scene.rooms.some(r => r.id === d.room) ? d.room : (state.scopeMode === 'room' ? levelsRooms[0]?.id : null));
   state.focus = ['none', 'dim', 'isolate'].includes(qFocus) ? qFocus : (d.focus || 'dim');
   state.allLevels = qAll === '1' || (qAll !== '0' && !!d.allLevels);
+  const scene = state.config?.scene || {};
+  state.stackLevels = params.get('stack') !== '0' && scene.stackLevels !== false;
+  if (params.get('walls')) scene.wallMode = params.get('walls');
+  if (params.get('floors') === '0') scene.showFloors = false;
+  if (params.get('labels') === '0') scene.showLabels = false;
+  state.transparent = params.get('transparent') === '1' || (state.transparent && !!state.embed);
+  state.roomOnly = state.embed && state.scopeMode === 'room';
+  document.body.classList.toggle('transparent', state.transparent);
+  document.body.classList.toggle('room-only', state.roomOnly);
+  viewer.setWallMode(scene.wallMode || 'solid');
+  viewer.setFloors(scene.showFloors !== false);
+  viewer.setStackLevels(state.stackLevels);
+  viewer.setLabels(scene.showLabels !== false);
+  viewer.setCeilings(!!scene.showCeilings);
+  viewer.setTransparent(state.transparent);
+  viewer.setRoomOnly(state.roomOnly);
+  viewer.setZoomOnly(state.roomOnly);
+  $('#btnWalls')?.classList.toggle('is-active', (scene.wallMode || 'solid') !== 'solid');
+  $('#btnFloors')?.classList.toggle('is-active', scene.showFloors === false);
   state.view = ['iso', 'front', 'top', 'walk'].includes(qView) ? qView : (d.view || 'iso');
   if (params.get('walk') === '1') state.view = 'walk';
-  viewer.setScope({ mode: state.scopeMode, level: state.level, room: state.room, focus: state.focus, allLevels: state.allLevels, fit: false });
+  if (state.roomOnly && !['iso', 'front', 'top'].includes(state.view)) state.view = 'iso';
+  viewer.setScope({ mode: state.scopeMode, level: state.level, room: state.room, focus: state.focus, allLevels: state.allLevels, stackLevels: state.stackLevels, fit: false });
   viewer.setView(state.view);
-  viewer.setAutoRotate(params.get('rotate') === '1' || !!d.autoRotate);
-  $('#btnRotate').classList.toggle('is-active', !!d.autoRotate || params.get('rotate') === '1');
+  viewer.setAutoRotate(!state.roomOnly && (params.get('rotate') === '1' || !!d.autoRotate));
+  $('#btnRotate').classList.toggle('is-active', !state.roomOnly && (!!d.autoRotate || params.get('rotate') === '1'));
   renderFloors();
   updateStageTitle();
   updateEditButton();
@@ -256,6 +290,28 @@ function bindShell() {
     if (btn.dataset.view === 'walk') viewer?.setView('walk');
     else viewer?.setView(btn.dataset.view);
   }));
+  $('#btnWalls').addEventListener('click', () => {
+    const s = state.config?.scene || {};
+    const order = ['solid', 'transparent', 'hidden'];
+    const cur = order.indexOf(s.wallMode || 'solid');
+    const next = order[(cur + 1) % order.length];
+    state.config.scene = { ...s, wallMode: next };
+    viewer?.setWallMode(next);
+    $('#btnWalls').classList.toggle('is-active', next !== 'solid');
+    $('#btnWalls').title = next === 'solid' ? 'Wände: sichtbar' : next === 'transparent' ? 'Wände: transparent' : 'Wände: ausgeblendet';
+    scheduleSave(true);
+    toast(next === 'solid' ? 'Wände sichtbar' : next === 'transparent' ? 'Wände transparent' : 'Wände ausgeblendet');
+  });
+  $('#btnFloors').addEventListener('click', () => {
+    const s = state.config?.scene || {};
+    const next = s.showFloors === false;
+    state.config.scene = { ...s, showFloors: next };
+    viewer?.setFloors(next);
+    $('#btnFloors').classList.toggle('is-active', !next);
+    $('#btnFloors').title = next ? 'Böden ausblenden' : 'Böden einblenden';
+    scheduleSave(true);
+    toast(next ? 'Böden sichtbar' : 'Böden ausgeblendet');
+  });
   $('#btnRotate').addEventListener('click', () => {
     const on = !$('#btnRotate').classList.contains('is-active');
     viewer?.setAutoRotate(on);
@@ -285,6 +341,8 @@ function bindShell() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       if (els.overlay.classList.contains('is-open')) closeModal();
+      else if (state.roomOnly) return;
+      else if (state.scopeMode === 'room' || state.focus !== 'none') resetFocus();
       else if (els.inspector.classList.contains('is-open')) closeInspector();
       else document.body.classList.remove('sidebar-open');
     }
@@ -338,8 +396,17 @@ function renderFloors() {
       <span class="floor-h">${l.elevation ? '+' + (l.elevation / 100).toFixed(1) + 'm' : 'EG'}</span>
     </button>`).join('');
   $$('.floor-chip', els.floorList).forEach(btn => btn.addEventListener('click', () => setLevel(btn.dataset.level)));
-  els.floorFloat.innerHTML = levels.map(l => `<button class="${l.id === state.level && !state.allLevels ? 'is-active' : ''}" data-level="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('');
-  $$('button', els.floorFloat).forEach(btn => btn.addEventListener('click', () => setLevel(btn.dataset.level)));
+  els.floorFloat.innerHTML = levels.map(l => `<button class="${l.id === state.level && !state.allLevels ? 'is-active' : ''}" data-level="${escapeHtml(l.id)}">${escapeHtml(l.name)}</button>`).join('') +
+    `<button class="stack-toggle ${state.stackLevels ? 'is-active' : ''}" data-stack="1" title="Untere Etagen sichtbar lassen">⧉ Stapel</button>`;
+  $$('button[data-level]', els.floorFloat).forEach(btn => btn.addEventListener('click', () => setLevel(btn.dataset.level)));
+  $('[data-stack]', els.floorFloat)?.addEventListener('click', () => {
+    state.stackLevels = !state.stackLevels;
+    state.config.scene.stackLevels = state.stackLevels;
+    viewer?.setStackLevels(state.stackLevels);
+    scheduleSave(true);
+    renderFloors();
+    toast(state.stackLevels ? 'Etagen gestapelt' : 'Nur aktuelle Etage');
+  });
   els.floorFloat.classList.toggle('is-hidden', state.embed && params.get('chrome') === '0');
 }
 
@@ -351,7 +418,7 @@ function setLevel(level) {
     const first = state.scene.rooms.find(r => r.level === level);
     state.room = first?.id || null;
   }
-  viewer?.setScope({ level, room: state.room, allLevels: false });
+  viewer?.setScope({ level, room: state.room, allLevels: false, stackLevels: state.stackLevels });
   renderFloors();
   updateStageTitle();
   renderObjects();
@@ -427,7 +494,11 @@ function onSceneObjectClick(obj) {
   const mapping = state.config?.mappings?.[obj.id];
   if (state.editMode) { selectObject(obj); return; }
   if (mapping?.entity_id && mapping.tap !== false) { toggleObject(obj); return; }
-  if (mapping) { openSheet(obj); return; }
+  if (!mapping?.entity_id) {
+    const on = viewer?.toggleLocal(obj.id);
+    toast(on ? `${obj.name}: im Modell an` : `${obj.name}: im Modell aus`);
+    return;
+  }
   selectObject(obj);
 }
 
@@ -441,15 +512,72 @@ function onFloatClick(obj) {
 }
 
 function onRoomClick(room) {
-  state.scopeMode = 'room';
-  state.room = room.id;
-  state.level = room.level;
-  state.focus = state.focus === 'none' ? 'dim' : state.focus;
-  viewer?.setScope({ mode: 'room', level: room.level, room: room.id, focus: state.focus, allLevels: false });
-  renderFloors();
+  if (state.roomOnly) return;
+  if (state.embed) {
+    state.scopeMode = 'room';
+    state.room = room.id;
+    state.level = room.level;
+    state.focus = 'isolate';
+    viewer?.setScope({ mode: 'room', level: room.level, room: room.id, focus: 'isolate', allLevels: false });
+    renderFloors();
+    updateStageTitle();
+    return;
+  }
+  openRoomModal(room);
+}
+
+function resetFocus() {
+  closeInspector();
+  closeModal();
+  state.room = null;
+  state.scopeMode = 'home';
+  state.focus = 'none';
+  viewer?.selectObject(null);
+  viewer?.setScope({ mode: 'home', room: null, focus: 'none', fit: false });
+  viewer?.setView('iso');
   updateStageTitle();
   renderObjects();
-  toast(`Zimmer: ${room.name}`);
+}
+
+function openRoomModal(room) {
+  const level = state.scene.levels.find(l => l.id === room.level);
+  const s = state.config?.scene || {};
+  let mode = state.scopeMode === 'room' && state.room === room.id ? state.focus : 'dim';
+  let walls = s.wallMode || 'solid';
+  els.modal.className = 'modal room-modal';
+  els.modal.innerHTML = `
+    <div class="modal-head"><div><h2>${escapeHtml(room.name)}</h2><p>${escapeHtml(level?.name || '')} · ${room.area.toFixed(1)} m²</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <div class="modal-section"><h3>Ansicht</h3><div class="option-grid" id="roomModes">
+        <button class="option-card ${mode === 'dim' ? 'is-active' : ''}" data-rm="dim"><strong>Zimmer + Umgebung</strong><small>Andere Räume sanft dimmen</small></button>
+        <button class="option-card ${mode === 'isolate' ? 'is-active' : ''}" data-rm="isolate"><strong>Nur dieses Zimmer</strong><small>Alles andere ausblenden</small></button>
+        <button class="option-card" data-rm="floor"><strong>Ganze Etage</strong><small>Zimmer verlassen</small></button>
+      </div></div>
+      <div class="modal-section"><h3>Kamera</h3><div class="segmented" id="roomViews"><button data-rv="iso" class="is-active">3D</button><button data-rv="top">Von oben</button><button data-rv="front">Vorne</button></div></div>
+      <div class="modal-section"><h3>Wände</h3><div class="segmented" id="roomWalls"><button data-rw="solid" class="${walls === 'solid' ? 'is-active' : ''}">Sichtbar</button><button data-rw="transparent" class="${walls === 'transparent' ? 'is-active' : ''}">Transparent</button><button data-rw="hidden" class="${walls === 'hidden' ? 'is-active' : ''}">Ausblenden</button></div></div>
+      <div class="hint">Tipp: <b>Esc</b> oder ein Klick ins Leere verlässt die Zimmeransicht wieder.</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-primary" id="roomApply"><svg><use href="#i-check"/></svg> Anwenden</button></div>`;
+  openModal();
+  $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+  $$('#roomModes [data-rm]').forEach(b => b.addEventListener('click', () => { mode = b.dataset.rm; $$('#roomModes .option-card').forEach(x => x.classList.toggle('is-active', x === b)); }));
+  $$('#roomWalls [data-rw]').forEach(b => b.addEventListener('click', () => { walls = b.dataset.rw; $$('#roomWalls button').forEach(x => x.classList.toggle('is-active', x === b)); }));
+  let view = 'iso';
+  $$('#roomViews [data-rv]').forEach(b => b.addEventListener('click', () => { view = b.dataset.rv; $$('#roomViews button').forEach(x => x.classList.toggle('is-active', x === b)); }));
+  $('#roomApply').addEventListener('click', () => {
+    state.config.scene.wallMode = walls;
+    viewer?.setWallMode(walls);
+    scheduleSave(true);
+    if (mode === 'floor') {
+      state.scopeMode = 'home'; state.room = null; state.focus = 'none';
+      viewer?.setScope({ mode: 'home', level: room.level, room: null, focus: 'none' });
+    } else {
+      state.scopeMode = 'room'; state.room = room.id; state.level = room.level; state.focus = mode;
+      viewer?.setScope({ mode: 'room', level: room.level, room: room.id, focus: mode });
+    }
+    viewer?.setView(view);
+    updateStageTitle(); renderFloors(); renderObjects(); closeModal();
+  });
 }
 
 async function toggleObject(obj) {
@@ -528,8 +656,13 @@ function renderInspector(obj) {
   else renderDeviceTab(body, obj, m);
 }
 
-function entityOptions(selected, recommended = []) {
-  const list = state.entities.filter(e => !e.attributes?._hidden);
+function entityOptions(selected, recommended = [], query = '') {
+  const q = String(query || '').trim().toLowerCase();
+  const list = state.entities.filter(e => {
+    if (e.attributes?._hidden) return false;
+    if (!q) return true;
+    return `${e.attributes?.friendly_name || ''} ${e.entity_id} ${e.attributes?._area || ''}`.toLowerCase().includes(q);
+  });
   const groups = new Map();
   for (const e of list) {
     const d = domainOf(e.entity_id);
@@ -585,7 +718,8 @@ function renderDeviceTab(body, obj, m) {
         ` : `<div class="hint">Noch kein Gerät zugewiesen. Wähle unten eine Entität aus.</div>`}
       </div>
       <div class="field" style="margin-top:10px">
-        <label for="entitySelect">Entität wählen</label>
+        <label for="entitySearch">Entität suchen</label>
+        <div class="search-wrap" style="margin-bottom:6px"><svg><use href="#i-search"/></svg><input id="entitySearch" placeholder="Name oder entity_id …" autocomplete="off"></div>
         <select class="select" id="entitySelect">${entityOptions(m?.entity_id || '', km.domains)}</select>
       </div>
       ${!m?.entity_id ? `<div class="insight"><svg><use href="#i-link"/></svg><div>Empfohlen: ${km.domains.map(d => domainLabel(d)).join(', ')}. Du kannst jede passende Entität verwenden.</div></div>` : ''}
@@ -594,15 +728,21 @@ function renderDeviceTab(body, obj, m) {
     <div class="section">
       <h3>Interaktion</h3>
       <div class="toggle-row"><div class="toggle-copy"><strong>Tippen auf das Objekt</strong><small>Im Live-Modus direkt schalten</small></div><button class="switch ${m?.tap !== false ? 'is-on' : ''}" data-toggle="tap" aria-label="Tippen"></button></div>
-      <div class="toggle-row"><div class="toggle-copy"><strong>Schwebender Knopf</strong><small>Kleiner Knopf über dem Objekt</small></div><button class="switch ${m?.button !== false ? 'is-on' : ''}" data-toggle="button" aria-label="Knopf"></button></div>
+      <div class="toggle-row"><div class="toggle-copy"><strong>Schwebender Knopf</strong><small>Optional; sonst direkt auf das Objekt tippen</small></div><button class="switch ${m?.button === true ? 'is-on' : ''}" data-toggle="button" aria-label="Knopf"></button></div>
       <div class="field" style="margin-top:10px"><label for="labelInput">Eigener Name (optional)</label><input class="input" id="labelInput" value="${escapeHtml(m?.label || '')}" placeholder="${escapeHtml(obj.name)}"></div>
     </div>
     ${renderQuickControls(obj, m, entity)}
     ${renderAssociationInfo(obj, m, entity)}
   `;
+  $('#entitySearch').addEventListener('input', e => {
+    const sel = $('#entitySelect');
+    const current = sel.value;
+    sel.innerHTML = entityOptions(current, km.domains, e.target.value);
+    sel.value = current;
+  });
   $('#entitySelect').addEventListener('change', e => {
     const id = e.target.value;
-    updateMapping(obj, { entity_id: id, tap: true, button: true });
+    updateMapping(obj, { entity_id: id, tap: true, button: false });
   });
   $$('[data-act]', body).forEach(btn => btn.addEventListener('click', async () => {
     if (btn.dataset.act === 'clear') { updateMapping(obj, { entity_id: '', tap: false, button: false }); return; }
@@ -610,7 +750,7 @@ function renderDeviceTab(body, obj, m) {
   }));
   $$('[data-toggle]', body).forEach(btn => btn.addEventListener('click', () => {
     const key = btn.dataset.toggle;
-    const current = key === 'tap' ? m?.tap !== false : m?.button !== false;
+    const current = key === 'tap' ? m?.tap !== false : m?.button === true;
     updateMapping(obj, { [key]: !current });
   }));
   $('#labelInput').addEventListener('change', e => updateMapping(obj, { label: e.target.value.trim() }));
@@ -667,6 +807,9 @@ function renderQuickControls(obj, m, entity) {
 
 function renderAssociationInfo(obj, m, entity) {
   if (!m?.entity_id) return '';
+  if (obj.kind === 'light') {
+    return `<div class="insight"><svg><use href="#i-light"/></svg><div>Das Licht leuchtet automatisch, sobald die Entität <b>an</b> ist – dafür ist keine Regel nötig. Farbe, Helligkeit und Weißton kommen direkt aus Home Assistant.</div></div>`;
+  }
   const domain = domainOf(m.entity_id);
   if (obj.kind === 'display' && domain === 'binary_sensor') {
     return `<div class="insight warn"><svg><use href="#i-bolt"/></svg><div>Dies ist ein Sensor. Damit der Monitor bei PC-An leuchtet, lege unter <b>Regeln</b> eine Bedingung an.</div></div>`;
@@ -1026,6 +1169,8 @@ function buildEmbedConfig(overrides = {}) {
     chrome: true,
     night: document.body.classList.contains('night'),
     allLevels: state.allLevels,
+    stackLevels: state.stackLevels,
+    labels: state.config?.scene?.showLabels !== false,
     rotate: false,
     height: 460,
     ...overrides,
@@ -1047,6 +1192,8 @@ function embedUrl(opts) {
   if (opts.chrome === false) p.set('chrome', '0');
   if (opts.night) p.set('theme', 'night');
   if (opts.allLevels) p.set('all', '1');
+  if (opts.stackLevels === false) p.set('stack', '0');
+  if (opts.labels === false) p.set('labels', '0');
   if (opts.rotate) p.set('rotate', '1');
   return u.toString();
 }
@@ -1065,6 +1212,8 @@ function dashboardYaml(opts) {
   if (opts.night) lines.push('theme: night');
   if (!opts.chrome) lines.push('chrome: false');
   if (opts.allLevels) lines.push('all_levels: true');
+  if (opts.labels === false) lines.push('labels: false');
+  if (opts.stackLevels === false) lines.push('stack_levels: false');
   return lines.join('\n');
 }
 
@@ -1082,6 +1231,8 @@ function openDashboardModal() {
     night: document.body.classList.contains('night'),
     level: d.level || state.level,
     room: d.room || state.room,
+    labels: d.labels !== false,
+    stackLevels: d.stackLevels !== false,
   };
   const update = () => {
     const code = dashboardYaml(opts);
@@ -1120,7 +1271,9 @@ function openDashboardModal() {
         </div>
         <div class="toggle-row" style="margin-top:10px"><div class="toggle-copy"><strong>Etagen-Leiste</strong><small>Im Dashboard sichtbar</small></div><button class="switch ${opts.chrome ? 'is-on' : ''}" id="dashChrome"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Dunkles Ambiente</strong><small>Warmer Night-Modus</small></div><button class="switch ${opts.night ? 'is-on' : ''}" id="dashNight"></button></div>
-        <div class="toggle-row"><div class="toggle-copy"><strong>Alle Etagen stapeln</strong><small>Für die Gesamtansicht</small></div><button class="switch ${opts.allLevels ? 'is-on' : ''}" id="dashAll"></button></div>
+        <div class="toggle-row"><div class="toggle-copy"><strong>Alle Etagen stapeln</strong><small>Untere Etagen bleiben sichtbar</small></div><button class="switch ${opts.allLevels ? 'is-on' : ''}" id="dashAll"></button></div>
+        <div class="toggle-row"><div class="toggle-copy"><strong>Raumlabels</strong><small>Namen im 3D-Modell</small></div><button class="switch ${opts.labels !== false ? 'is-on' : ''}" id="dashLabels"></button></div>
+        <div class="toggle-row"><div class="toggle-copy"><strong>Etagen stapeln</strong><small>Untere Geschosse sichtbar lassen</small></div><button class="switch ${opts.stackLevels !== false ? 'is-on' : ''}" id="dashStack"></button></div>
       </div>
       <div class="modal-section"><h3>Vorschau</h3><div class="preview-frame" id="dashPreview"><iframe title="Vorschau" loading="lazy"></iframe></div><div class="preview-note">Die Vorschau läuft in der echten Add-on-Ansicht.</div></div>
       <div class="modal-section"><h3>Karte für Lovelace</h3><div class="code-box" id="dashCode"></div>
@@ -1147,6 +1300,8 @@ function openDashboardModal() {
   $('#dashChrome').addEventListener('click', e => { opts.chrome = !opts.chrome; e.currentTarget.classList.toggle('is-on', opts.chrome); update(); });
   $('#dashNight').addEventListener('click', e => { opts.night = !opts.night; e.currentTarget.classList.toggle('is-on', opts.night); update(); });
   $('#dashAll').addEventListener('click', e => { opts.allLevels = !opts.allLevels; e.currentTarget.classList.toggle('is-on', opts.allLevels); refreshMode(); });
+  $('#dashLabels').addEventListener('click', e => { opts.labels = opts.labels === false; e.currentTarget.classList.toggle('is-on', opts.labels !== false); update(); });
+  $('#dashStack').addEventListener('click', e => { opts.stackLevels = opts.stackLevels === false; e.currentTarget.classList.toggle('is-on', opts.stackLevels !== false); update(); });
   $('#dashCopy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(dashboardYaml(opts)); toast('YAML kopiert'); } catch { toast('Kopieren nicht möglich – bitte manuell markieren', true); }
   });
@@ -1169,6 +1324,9 @@ function openSettingsModal() {
     <div class="modal-head"><div><h2>Szene &amp; Modell</h2><p>${escapeHtml(state.model.name)} · ${stats.rooms || 0} Räume · ${stats.objects || 0} Objekte</p></div><button class="icon-btn" data-close><svg><use href="#i-close"/></svg></button></div>
     <div class="modal-body">
       <div class="modal-section"><h3>Darstellung</h3>
+        <div class="field"><label>Wände</label><div class="segmented" id="setWalls"><button data-wm="solid" class="${(s.wallMode || 'solid') === 'solid' ? 'is-active' : ''}">Sichtbar</button><button data-wm="transparent" class="${s.wallMode === 'transparent' ? 'is-active' : ''}">Transparent</button><button data-wm="hidden" class="${s.wallMode === 'hidden' ? 'is-active' : ''}">Aus</button></div></div>
+        <div class="toggle-row"><div class="toggle-copy"><strong>Böden</strong><small>Bodenflächen und Sockel anzeigen</small></div><button class="switch ${s.showFloors !== false ? 'is-on' : ''}" id="setFloors"></button></div>
+        <div class="toggle-row"><div class="toggle-copy"><strong>Etagen stapeln</strong><small>Untere Etagen bleiben sichtbar</small></div><button class="switch ${s.stackLevels !== false ? 'is-on' : ''}" id="setStack"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Raumlabels</strong><small>Namen und Flächen im Modell</small></div><button class="switch ${s.showLabels !== false ? 'is-on' : ''}" id="setLabels"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Decken</strong><small>Halbtransparente Decken anzeigen</small></div><button class="switch ${s.showCeilings ? 'is-on' : ''}" id="setCeilings"></button></div>
         <div class="toggle-row"><div class="toggle-copy"><strong>Sanfte Drehung</strong><small>Kamera langsam kreisen lassen</small></div><button class="switch ${s.autoRotate ? 'is-on' : ''}" id="setRotate"></button></div>
@@ -1183,17 +1341,39 @@ function openSettingsModal() {
         <div class="insight"><svg><use href="#i-cloud"/></svg><div>Home Assistant: <b>${state.connected ? 'verbunden' : 'nicht verbunden'}</b> · ${state.entities.length} Entitäten<br>Add-on: SH3D Home ${state.model ? '' : ''}<br>Diese Instanz: <code>${escapeHtml(location.host)}</code></div></div>
       </div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" data-close>Schließen</button><button class="btn btn-primary" id="setSave"><svg><use href="#i-check"/></svg> Übernehmen</button></div>`;
+    <div class="modal-foot"><button class="btn btn-ghost" data-close>Schließen</button><button class="btn btn-primary" id="setSave"><svg><use href="#i-check"/></svg> Fertig</button></div>`;
   openModal();
   $$('[data-close]').forEach(b => b.addEventListener('click', closeModal));
-  let next = { showLabels: s.showLabels !== false, showCeilings: !!s.showCeilings, autoRotate: !!s.autoRotate };
+  let next = {
+    showLabels: s.showLabels !== false, showCeilings: !!s.showCeilings, autoRotate: !!s.autoRotate,
+    showFloors: s.showFloors !== false, stackLevels: s.stackLevels !== false, wallMode: s.wallMode || 'solid',
+  };
+  const applyScene = () => {
+    state.config.scene = { ...state.config.scene, ...next };
+    viewer?.setWallMode(next.wallMode);
+    viewer?.setFloors(next.showFloors);
+    viewer?.setStackLevels(next.stackLevels);
+    viewer?.setLabels(next.showLabels);
+    viewer?.setCeilings(next.showCeilings);
+    viewer?.setAutoRotate(next.autoRotate);
+    state.stackLevels = next.stackLevels;
+    $('#btnRotate').classList.toggle('is-active', next.autoRotate);
+    scheduleSave(true);
+  };
   const toggle = (id, key) => {
     const btn = $('#' + id);
-    btn.addEventListener('click', () => { next[key] = !next[key]; btn.classList.toggle('is-on', next[key]); });
+    btn.addEventListener('click', () => { next[key] = !next[key]; btn.classList.toggle('is-on', next[key]); applyScene(); });
   };
+  toggle('setFloors', 'showFloors');
+  toggle('setStack', 'stackLevels');
   toggle('setLabels', 'showLabels');
   toggle('setCeilings', 'showCeilings');
   toggle('setRotate', 'autoRotate');
+  $$('#setWalls [data-wm]').forEach(b => b.addEventListener('click', () => {
+    next.wallMode = b.dataset.wm;
+    $$('#setWalls button').forEach(x => x.classList.toggle('is-active', x === b));
+    applyScene();
+  }));
   $('#setUpload').addEventListener('click', () => { closeModal(); pickFile(); });
   $('#setScan').addEventListener('click', async () => {
     try { const r = await api('import/scan', { method: 'POST', body: {} }); toast(r.imported?.length ? `${r.imported.length} Modell(e) importiert` : 'Keine neuen Dateien gefunden'); if (r.imported?.length) { const data = await api('models'); state.models = data.models || []; openModelPicker(); } } catch (err) { toast(err.message, true); }
@@ -1203,12 +1383,7 @@ function openSettingsModal() {
     try { await api(`models/${state.model.id}`, { method: 'DELETE' }); state.models = state.models.filter(m => m.id !== state.model.id); closeModal(); if (state.models.length) await openModel(state.models[0]); else { state.model = null; state.scene = null; setEmpty(true); } toast('Modell gelöscht'); } catch (err) { toast(err.message, true); }
   });
   $('#setSave').addEventListener('click', () => {
-    state.config.scene = { ...state.config.scene, ...next };
-    viewer?.setCeilings(next.showCeilings);
-    viewer?.setLabels(next.showLabels !== false);
-    viewer?.setAutoRotate(!!next.autoRotate);
-    $('#btnRotate').classList.toggle('is-active', !!next.autoRotate);
-    scheduleSave(true);
+    applyScene();
     closeModal();
     toast('Darstellung gespeichert');
   });

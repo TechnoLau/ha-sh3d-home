@@ -34,6 +34,31 @@ view: iso           # iso | front | top
 height: 460
 ```
 
+## Bedienung
+
+- **Live:** Klick auf ein Objekt schaltet es. Ohne zugeordnetes Gerät wird nur das Modell umgeschaltet.
+- **Gedrückt halten:** öffnet Gerät, Farbe, Temperatur und Regeln.
+- **Raum:** Boden anklicken – auch ohne Labels. Danach „Nur Zimmer“, „Zimmer + Umgebung“ oder „Ganze Etage“ wählen.
+- **Wände:** oben per Augen-Symbol oder unter „Szene“ zwischen sichtbar, transparent und aus wechseln.
+- **Etagen:** untere Etagen bleiben standardmäßig sichtbar (`Stapel` in der Etagenleiste).
+- **Esc / Klick ins Leere:** verlässt die Zimmeransicht.
+
+## Dashboard-Karte
+
+Für ein einzelnes Zimmer wird die Karte automatisch transparent, ohne Kopfleiste und ohne Bedienknöpfe außer den Geräten. Es ist nur Zoom erlaubt, kein Verschieben/Drehen.
+
+```yaml
+type: custom:sh3d-home-card
+model: DEIN_MODELL_ID
+mode: room
+level: level-id
+room: room-id
+focus: isolate
+view: top
+height: 520
+labels: false
+```
+
 ## Funktionen
 
 - .sh3d-Import inkl. Wänden, Räumen, Möbeln und Original-3D-Modellen
