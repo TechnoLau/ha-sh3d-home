@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.1';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.2';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -974,7 +974,7 @@ export class Viewer {
       // matching floor from the SH3D room polygon so rooms don't float.
       for (const room of this.sceneData.rooms) {
         if (this.objFloorLevels.has(room.level)) continue;
-        const shape = new THREE.Shape(room.points.map(p => new THREE.Vector2(this._wx(p[0]), this._wz(p[1]))));
+        const shape = new THREE.Shape(room.points.map(p => new THREE.Vector2(this._wx(p[0]), -this._wz(p[1]))));
         const geom = new THREE.ShapeGeometry(shape);
         const mat = new THREE.MeshStandardMaterial({ color: '#8f6f4f', roughness: .86, metalness: .01 });
         const mesh = new THREE.Mesh(geom, mat);
