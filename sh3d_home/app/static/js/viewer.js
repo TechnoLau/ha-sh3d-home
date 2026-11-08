@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.2';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.3';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -951,8 +951,11 @@ export class Viewer {
       this.objRoot = root;
       this.root.add(root);
       this.objVisual = true;
-      this.objRoomLevels = new Set((info.groups || []).filter(g => g.kind === 'floor' || g.kind === 'ceiling').map(g => g.level));
       this.objFloorLevels = new Set((info.groups || []).filter(g => g.kind === 'floor').map(g => g.level));
+      // Only levels with real OBJ floor surfaces use the OBJ renderer. The
+      // SH3D OBJ exporter currently emits upper rooms as ceiling-only surfaces,
+      // so those storeys keep the complete procedural renderer.
+      this.objRoomLevels = new Set(this.objFloorLevels);
       if (!this.objRoomLevels.size) this.objRoomLevels = new Set(this.levels.keys());
       // Hide the procedurally rendered SH3D visual only on levels covered by
       // the OBJ; other floors keep the normal renderer.
@@ -1277,7 +1280,7 @@ export class Viewer {
       mesh.material.depthWrite = false;
     }
     for (const floor of this.syntheticFloors) {
-      floor.mesh.visible = activeLevels.has(floor.level) && (!roomScope || !targetRoom || floor.room === targetRoom);
+      floor.mesh.visible = this.objRoomLevels.has(floor.level) && activeLevels.has(floor.level) && (!roomScope || !targetRoom || floor.room === targetRoom);
     }
     for (const w of this.wallGroups) {
       if (!this.objRoomLevels.has(w.level)) {
