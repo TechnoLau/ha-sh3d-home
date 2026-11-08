@@ -54,10 +54,18 @@ def _level_for(scene: dict[str, Any], z: float) -> str:
     levels = scene.get("levels", [])
     if not levels:
         return "level-0"
-    # OBJ's vertical axis starts at 0 for the exported floor. Prefer a level
-    # whose elevation is closest but not above the geometry.
-    best = min(levels, key=lambda l: abs(float(l.get("elevation", 0)) - z))
+    # OBJ's vertical axis starts at 0 for the exported floor. A ceiling at
+    # 250 cm still belongs to the ground floor, not to the storey at 262 cm.
+    below = [l for l in levels if float(l.get("elevation", 0)) <= z + 2]
+    best = max(below, key=lambda l: float(l.get("elevation", 0))) if below else min(levels, key=lambda l: float(l.get("elevation", 0)))
     return best["id"]
+
+
+def _level_elevation(scene: dict[str, Any], level_id: str) -> float:
+    for level in scene.get("levels", []):
+        if level.get("id") == level_id:
+            return float(level.get("elevation", 0))
+    return 0.0
 
 
 def extract_zip(source: Path, target: Path) -> Path:
@@ -109,14 +117,14 @@ def parse_obj(obj_path: Path, scene: dict[str, Any]) -> dict[str, Any]:
                     if 1 <= index <= len(vertices):
                         current["verts"].add(index - 1)
 
-    def kind_for(name: str, materials: set[str]) -> str:
+    def kind_for(name: str, materials: set[str], miny: float, level: str) -> str:
         text = (name + " " + " ".join(sorted(materials))).lower()
         if name.startswith("wall_"):
             return "wall"
         if name.startswith("ground"):
             return "ground"
         if name.startswith("room_"):
-            return "ceiling" if name.rsplit("_", 1)[-1].endswith("99") else "floor"
+            return "floor" if miny <= _level_elevation(scene, level) + 5 else "ceiling"
         if any(w in text for w in ("window", "fenster")):
             return "window"
         if any(w in text for w in ("door", "tür", "tuer")):
@@ -146,8 +154,8 @@ def parse_obj(obj_path: Path, scene: dict[str, Any]) -> dict[str, Any]:
                 bounds[key] = min(bounds[key], val)
             else:
                 bounds[key] = max(bounds[key], val)
-        kind = kind_for(g["name"], g["materials"])
         level = _level_for(scene, miny)
+        kind = kind_for(g["name"], g["materials"], miny, level)
         room = _room_for(scene, cx, cz, level)
         meta = {
             "name": g["name"], "kind": kind, "level": level, "room": room,
