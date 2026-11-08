@@ -1,8 +1,8 @@
-import { Viewer } from './viewer.js?v=0.4.3';
+import { Viewer } from './viewer.js?v=0.4.4';
 import {
   KIND, OPERATORS, EFFECTS, emptyMapping, normalizeMapping, normalizeRule,
   entityName, domainOf, isOn, stateLabel, visualState, ruleSummary, escapeHtml, domainLabel,
-} from './rules.js?v=0.4.3';
+} from './rules.js?v=0.4.4';
 
 const API = new URL('api/', document.baseURI);
 const params = new URLSearchParams(location.search);
@@ -1417,6 +1417,10 @@ function openSettingsModal() {
         <div class="toggle-row"><div class="toggle-copy"><strong>Sanfte Drehung</strong><small>Kamera langsam kreisen lassen</small></div><button class="switch ${s.autoRotate ? 'is-on' : ''}" id="setRotate"></button></div>
         <div class="field"><label>Tageszeit</label><div class="segmented" id="setTime"><button data-time="day" class="${(s.timeOfDay || 'day') === 'day' ? 'is-active' : ''}">Tag</button><button data-time="evening" class="${s.timeOfDay === 'evening' ? 'is-active' : ''}">Abend</button><button data-time="night" class="${s.timeOfDay === 'night' ? 'is-active' : ''}">Nacht</button></div></div>
       </div>
+      <div class="modal-section"><h3>Etagen kalibrieren</h3>
+        ${(state.scene?.levels || []).map(l => `<div class="field" style="display:flex;align-items:center;gap:8px"><label style="flex:1;margin:0">${escapeHtml(l.name)}</label><input type="number" class="input level-offset" data-level="${l.id}" value="${Number(s.levelOffsets?.[l.id] || 0)}" step="1" style="width:92px"> <span class="hint">cm</span></div>`).join('')}
+        <p class="hint">Verschiebt die Etage nach oben/unten, falls OBJ- und SH3D-Geometrie nicht exakt übereinander liegen.</p>
+      </div>
       <div class="modal-section"><h3>Modell</h3>
         <div class="stat-grid"><div class="stat"><b>${stats.lights || 0}</b><span>Lichter</span></div><div class="stat"><b>${stats.rooms || 0}</b><span>Räume</span></div><div class="stat"><b>${stats.levels || 0}</b><span>Etagen</span></div></div>
         <div class="btn-row" style="margin-top:9px"><button class="btn btn-small" id="setUpload"><svg><use href="#i-upload"/></svg> Neues Modell</button><a class="btn btn-small" href="models/${state.model.id}/source" download><svg><use href="#i-copy"/></svg> .sh3d</a></div>
@@ -1436,6 +1440,7 @@ function openSettingsModal() {
     showLabels: s.showLabels !== false, showCeilings: !!s.showCeilings, autoRotate: !!s.autoRotate,
     showFloors: s.showFloors !== false, stackLevels: s.stackLevels !== false, wallMode: s.wallMode || 'solid',
     timeOfDay: s.timeOfDay || 'day',
+    levelOffsets: { ...(s.levelOffsets || {}) },
   };
   const applyScene = () => {
     state.config.scene = { ...state.config.scene, ...next };
@@ -1446,6 +1451,7 @@ function openSettingsModal() {
     viewer?.setCeilings(next.showCeilings);
     viewer?.setAutoRotate(next.autoRotate);
     viewer?.setTimeOfDay(next.timeOfDay);
+    viewer?.setLevelOffsets(next.levelOffsets);
     state.stackLevels = next.stackLevels;
     $('#btnRotate').classList.toggle('is-active', next.autoRotate);
     scheduleSave(true);
@@ -1462,6 +1468,10 @@ function openSettingsModal() {
   $$('#setWalls [data-wm]').forEach(b => b.addEventListener('click', () => {
     next.wallMode = b.dataset.wm;
     $$('#setWalls button').forEach(x => x.classList.toggle('is-active', x === b));
+    applyScene();
+  }));
+  $$('.level-offset').forEach(el => el.addEventListener('change', () => {
+    next.levelOffsets[el.dataset.level] = Number(el.value) || 0;
     applyScene();
   }));
   $$('#setTime [data-time]').forEach(b => b.addEventListener('click', () => {

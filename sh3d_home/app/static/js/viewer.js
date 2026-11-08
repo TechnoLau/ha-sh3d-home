@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.3';
+import { visualState, entityName, stateLabel, KIND } from './rules.js?v=0.4.4';
 
 const S = 0.01; // Sweet Home 3D centimetres -> Three.js metres
 const WARM = '#f2e7d3';
@@ -301,6 +301,7 @@ export class Viewer {
     this.states = {};
     this.mappings = config?.mappings || {};
     this.transforms = config?.transforms || {};
+    this.levelOffsets = config?.scene?.levelOffsets || {};
     this.wallMode = this.config?.scene?.wallMode || 'solid';
     this.showFloors = this.config?.scene?.showFloors !== false;
     this.scope.stackLevels = this.config?.scene?.stackLevels !== false;
@@ -353,6 +354,7 @@ export class Viewer {
     this.objRoot = null;
     this.objRoomLevels = new Set();
     this.objFloorLevels = new Set();
+    this.objLevelGroups = new Map();
     this.syntheticFloors = [];
     for (const btn of this.floatButtons.values()) btn.el.remove();
     this.floatButtons.clear();
@@ -376,7 +378,27 @@ export class Viewer {
   }
 
   _levelY(id) {
-    return (this.levels.get(id)?.elevation || 0) * S;
+    return ((this.levels.get(id)?.elevation || 0) + (Number(this.levelOffsets[id]) || 0)) * S;
+  }
+
+  setLevelOffsets(offsets = {}) {
+    const next = {};
+    for (const [id, value] of Object.entries(offsets)) {
+      if (Number.isFinite(Number(value))) next[id] = Number(value);
+    }
+    const old = this.levelOffsets || {};
+    for (const [id, group] of this.levelGroups) {
+      group.position.y += ((next[id] || 0) - (old[id] || 0)) * S;
+    }
+    for (const [id, group] of this.objLevelGroups) {
+      group.position.y += (next[id] || 0) - (old[id] || 0);
+    }
+    for (const { object, room } of this.roomLabels) {
+      object.position.y += ((next[room.level] || 0) - (old[room.level] || 0)) * S;
+    }
+    this.levelOffsets = next;
+    if (this.config?.scene) this.config.scene.levelOffsets = next;
+    this.fitScope();
   }
 
   _buildRooms() {
@@ -673,7 +695,8 @@ export class Viewer {
         mat.side = THREE.DoubleSide;
       } else {
         mat.transparent = true;
-        mat.opacity = Math.min(mat.opacity ?? 1, 0.78);
+        mat.opacity = Math.min(mat.opacity ?? 1, 0.34);
+        mat.depthWrite = false;
         mat.side = THREE.DoubleSide;
       }
     }
@@ -899,6 +922,7 @@ export class Viewer {
       }
       const group = await loadObj(materials);
       const root = new THREE.Group();
+      const levelGroups = new Map();
       root.scale.set(S, S, S);
       root.position.set(-this.cx * S, 0, -this.cy * S);
       const metaByName = new Map((info.groups || []).map(g => [g.name, g]));
@@ -946,8 +970,19 @@ export class Viewer {
           if (!this.objGroups.has(meta.name)) this.objGroups.set(meta.name, { meta, meshes: [] });
           this.objGroups.get(meta.name).meshes.push(mesh);
         }
-        root.add(mesh);
+        let parent = root;
+        if (meta) {
+          if (!levelGroups.has(meta.level)) {
+            const lg = new THREE.Group();
+            lg.position.y = Number(this.levelOffsets[meta.level]) || 0;
+            levelGroups.set(meta.level, lg);
+            root.add(lg);
+          }
+          parent = levelGroups.get(meta.level);
+        }
+        parent.add(mesh);
       }
+      this.objLevelGroups = levelGroups;
       this.objRoot = root;
       this.root.add(root);
       this.objVisual = true;
